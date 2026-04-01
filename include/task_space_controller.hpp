@@ -49,14 +49,14 @@ class HybridForceVelocityControl : public barrett::systems::System {
         S(2,0) = 0.0;  S(2,1) = 0.0;  S(2,2) = 0.0;
 
         // Default velocity gain
-        Kv(0,0) = 20.0; Kv(0,1) = 0.0; Kv(0,2) = 0.0;
+        Kv(0,0) = 50.0; Kv(0,1) = 0.0; Kv(0,2) = 0.0;
         Kv(1,0) = 0.0; Kv(1,1) = 0.0; Kv(1,2) = 0.0;
         Kv(2,0) = 0.0; Kv(2,1) = 0.0; Kv(2,2) = 0.0;
 
         // Default force gain
         Kf(0,0) = 0.0; Kf(0,1) = 0.0; Kf(0,2) = 0.0;
         Kf(1,0) = 0.0; Kf(1,1) = 0.0; Kf(1,2) = 0.0;
-        Kf(2,0) = 0.0; Kf(2,1) = 0.0; Kf(2,2) = 0.0;
+        Kf(2,0) = 0.0; Kf(2,1) = 0.0; Kf(2,2) = 0.5;
     }
 
     virtual ~HybridForceVelocityControl() {

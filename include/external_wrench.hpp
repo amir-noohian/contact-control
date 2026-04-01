@@ -1,5 +1,7 @@
 /*
-This file calculates the force applied to the robot by the environment.
+This file calculates the force and moment applied to the robot by the environment.
+For 4-DOF robots, force and moment are estimated separately using the
+translational and rotational parts of the Jacobian.
 */
 
 #pragma once
@@ -9,6 +11,7 @@ This file calculates the force applied to the robot by the environment.
 #include <barrett/detail/ca_macro.h>
 
 #include <Eigen/Dense>
+#include <string>
 
 using namespace barrett;
 
@@ -28,15 +31,26 @@ class ExternalWrench : public systems::System {
     typename Output<ct_type>::Value* momentOutputValue;
 
   public:
-    explicit ExternalWrench(barrett::systems::ExecutionManager* em, const std::string& sysName = "ExternalWrench")
+    explicit ExternalWrench(barrett::systems::ExecutionManager* em,
+                            const std::string& sysName = "ExternalWrench")
         : System(sysName)
         , externalTorqueIn(this)
         , jacobianIn(this)
         , forceOut(this, &forceOutputValue)
-        , momentOut(this, &momentOutputValue) {}
+        , momentOut(this, &momentOutputValue)
+        , lambdaForce_(1e-3)
+        , lambdaMoment_(1e-3) {}
 
     virtual ~ExternalWrench() {
         this->mandatoryCleanUp();
+    }
+
+    void setForceDamping(double lambda) {
+        lambdaForce_ = lambda;
+    }
+
+    void setMomentDamping(double lambda) {
+        lambdaMoment_ = lambda;
     }
 
   protected:
@@ -47,26 +61,52 @@ class ExternalWrench : public systems::System {
     ct_type moment;
 
     Eigen::Matrix<double, DOF, 1> tauEigen;
-    Eigen::Matrix<double, DOF, 6> JT;
-    Eigen::Matrix<double, 6, 1> wrenchEigen;
+
+    Eigen::Matrix<double, 3, DOF> Jforce;
+    Eigen::Matrix<double, 3, DOF> Jmoment;
+
+    Eigen::Matrix<double, 3, 1> forceEigen;
+    Eigen::Matrix<double, 3, 1> momentEigen;
+
+    double lambdaForce_;
+    double lambdaMoment_;
 
     virtual void operate() {
         tauExt = externalTorqueIn.getValue();
         J = jacobianIn.getValue();
 
-        // Convert directly (no loops)
         tauEigen = tauExt;
-        JT = J.transpose();
 
-        // Solve J^T W = tau
-        wrenchEigen = JT.colPivHouseholderQr().solve(tauEigen);
+        // Split Jacobian into translational and rotational parts
+        Jforce  = J.template topRows<3>();
+        Jmoment = J.template bottomRows<3>();
 
-        // Split cleanly (no loops)
-        force = wrenchEigen.template head<3>();
-        moment = wrenchEigen.template tail<3>();
+        // Estimate force: Jforce^T * F = tauExt
+        forceEigen = solveDampedLeastSquares(Jforce, tauEigen, lambdaForce_);
+
+        // Estimate moment: Jmoment^T * M = tauExt
+        momentEigen = solveDampedLeastSquares(Jmoment, tauEigen, lambdaMoment_);
+
+        force = forceEigen;
+        moment = momentEigen;
 
         forceOutputValue->setData(&force);
         momentOutputValue->setData(&moment);
+    }
+
+    Eigen::Matrix<double, 3, 1> solveDampedLeastSquares(
+        const Eigen::Matrix<double, 3, DOF>& Jpart,
+        const Eigen::Matrix<double, DOF, 1>& tau,
+        double lambda) {
+
+        // Solve Jpart^T * x = tau
+        // Equivalent damped least-squares solution:
+        // x = (Jpart * Jpart^T + lambda I)^(-1) * Jpart * tau
+
+        Eigen::Matrix3d A = Jpart * Jpart.transpose();
+        A += lambda * Eigen::Matrix3d::Identity();
+
+        return A.ldlt().solve(Jpart * tau);
     }
 
   private:

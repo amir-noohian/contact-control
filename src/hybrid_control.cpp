@@ -35,7 +35,9 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     HybridForceVelocityControl<DOF> hybridControl(pm.getExecutionManager());
     TaskToBaseControl<DOF> taskToBaseTransform(pm.getExecutionManager());
     BaseControlToJointTorque<DOF> controlToJoint(pm.getExecutionManager());
-    
+
+    // barrett::systems::Summer<jt_type, 2> customjtSum;
+    // pm.getExecutionManager()->startManaging(customjtSum);
 
     barrett::systems::PrintToStream<cf_type> printCartesianForce(pm.getExecutionManager(), "cartesianForce: ");
     barrett::systems::PrintToStream<cp_type> printCartesianPosition(pm.getExecutionManager(), "cartesianPosition: ");
@@ -44,9 +46,16 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     barrett::systems::PrintToStream<jt_type> printJointTorque(pm.getExecutionManager(), "externalJointTorque: ");
     barrett::systems::PrintToStream<cv_type> printCartesianVelocityJacobian(pm.getExecutionManager(), "cartesianVelocityJacobian: ");
     barrett::systems::PrintToStream<task_vector_force_type> printTaskForce(pm.getExecutionManager(), "toolForce: ");
-    barrett::systems::PrintToStream<task_vector_velocity_type> printTaskVelocity(pm.getExecutionManager(), "toolVelcoity: ");
+    barrett::systems::PrintToStream<task_vector_velocity_type> printTaskVelocity(pm.getExecutionManager(), "toolVelocity: ");
     barrett::systems::PrintToStream<task_control_type> printTaskControl(pm.getExecutionManager(), "taskControl: ");
     barrett::systems::PrintToStream<jt_type> printJointCommand(pm.getExecutionManager(), "jointCommand: ");
+    // barrett::systems::PrintToStream<jt_type> printcustomjtSum(pm.getExecutionManager(), "customjtSum: ");
+    barrett::systems::PrintToStream<jt_type> printjtSum(pm.getExecutionManager(), "jtSum: ");
+
+
+    // jtsum for external torque
+    // barrett::systems::connect(wam.gravity.output, customjtSum.getInput(0));
+    // barrett::systems::connect(wam.supervisoryController.output, customjtSum.getInput(1));
 
     // external torque
     barrett::systems::connect(wam.gravity.output, externalTorque.wamGravityIn);
@@ -73,7 +82,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     desiredVelocity.setZero();
     desiredForce.setZero();
     desiredVelocity[0] = 0.2;
-    desiredForce[2] = 0.0;
+    desiredForce[2] = 6.0;
 
     ConstantOutput<task_vector_velocity_type> desiredVelocitySource(pm.getExecutionManager(), desiredVelocity, "DesiredVelocity");
     ConstantOutput<task_vector_force_type> desiredForceSource(pm.getExecutionManager(), desiredForce, "DesiredForce");
@@ -100,6 +109,8 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     barrett::systems::connect(basetoTaskVelocity.velocityTaskOut, printTaskVelocity.input);
     // barrett::systems::connect(hybridControl.controlOutput, printTaskControl.input);
     // barrett::systems::connect(controlToJoint.jointTorqueOut, printJointCommand.input);
+    // barrett::systems::connect(customjtSum.output, printcustomjtSum.input);
+    barrett::systems::connect(wam.jtSum.output, printjtSum.input);
 
 
     jp_type target;
@@ -108,9 +119,9 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     // Example only. Replace with a safe pose for your robot.
     // For a 4-DOF WAM, set only the first 4 entries.
     if (DOF >= 1) { target[0] =  0.0; }
-    if (DOF >= 2) { target[1] =  -0.5; }
+    if (DOF >= 2) { target[1] =  0.9; }
     if (DOF >= 3) { target[2] =  0.0; }
-    if (DOF >= 4) { target[3] =  1.57; }
+    if (DOF >= 4) { target[3] =  1.85; }
     if (DOF >= 5) { target[4] =  0.0; }
     if (DOF >= 6) { target[5] =  0.0; }
     if (DOF >= 7) { target[6] =  0.0; }
@@ -184,9 +195,11 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
                 if (!contactActive) {
                     std::cout << "Starting contact controller..." << std::endl;
 
-                    // 👉 connect your controller here
-                    // systems::connect(controlToJoint.jointTorqueOut, wam.input);
-                    wam.trackReferenceSignal(controlToJoint.jointTorqueOut);
+                    // Use wam.input (jtSum JT_INPUT): trackReferenceSignal routes through
+                    // supervisory Converter, which can leave SC undefined when jtSum runs
+                    // (jtSum uses undefined-as-zero), so only gravity appeared in jtSum.
+                    wam.idle();
+                    barrett::systems::forceConnect(controlToJoint.jointTorqueOut, wam.input);
 
                     contactActive = true;
                 } else {
@@ -198,8 +211,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
                 if (contactActive) {
                     std::cout << "Stopping contact controller..." << std::endl;
 
-                    // 👉 disconnect your controller here
-                    // systems::disconnect(...);
+                    barrett::systems::disconnect(wam.input);
 
                     contactActive = false;
                 } else {

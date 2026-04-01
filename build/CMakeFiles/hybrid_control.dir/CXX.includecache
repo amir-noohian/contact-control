@@ -31,6 +31,8 @@ barrett/detail/ca_macro.h
 -
 Eigen/Dense
 -
+string
+-
 
 ../include/jacobian.hpp
 barrett/detail/ca_macro.h
