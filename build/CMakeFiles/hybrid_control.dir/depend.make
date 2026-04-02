@@ -4,6 +4,7 @@
 CMakeFiles/hybrid_control.dir/src/hybrid_control.cpp.o: ../include/bt_transformation.hpp
 CMakeFiles/hybrid_control.dir/src/hybrid_control.cpp.o: ../include/external_torque.hpp
 CMakeFiles/hybrid_control.dir/src/hybrid_control.cpp.o: ../include/external_wrench.hpp
+CMakeFiles/hybrid_control.dir/src/hybrid_control.cpp.o: ../include/hybrid_task_csv_logger.hpp
 CMakeFiles/hybrid_control.dir/src/hybrid_control.cpp.o: ../include/jacobian.hpp
 CMakeFiles/hybrid_control.dir/src/hybrid_control.cpp.o: ../include/task_space_controller.hpp
 CMakeFiles/hybrid_control.dir/src/hybrid_control.cpp.o: ../include/tj_transformation.hpp

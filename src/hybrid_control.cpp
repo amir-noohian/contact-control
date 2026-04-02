@@ -5,13 +5,65 @@
 #include "bt_transformation.hpp"
 #include "task_space_controller.hpp"
 #include "tj_transformation.hpp"
+#include "hybrid_task_csv_logger.hpp"
 
+#include <barrett/systems/tuple_grouper.h>
 #include <barrett/systems.h>
 #include <barrett/units.h>
 #include <barrett/products/product_manager.h>
 #include <barrett/standard_main_function.h>
 #include <barrett/detail/ca_macro.h>
 
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <dirent.h>
+#include <limits>
+#include <iostream>
+#include <string>
+#include <sys/stat.h>
+#include <sys/types.h>
+
+namespace {
+
+/** Ensures data dir exists; path hybrid_task_datalog_NNNN.csv (NNNN = 1 + max existing .csv). */
+std::string nextHybridTaskLogPath()
+{
+    const char* dataDir = "../../data";
+    const char* prefix = "hybrid_task_datalog_";
+    mkdir(dataDir, 0755);
+
+    int maxN = 0;
+    DIR* d = opendir(dataDir);
+    if (d) {
+        const size_t prefixLen = std::strlen(prefix);
+        while (struct dirent* e = readdir(d)) {
+            const char* name = e->d_name;
+            if (std::strncmp(name, prefix, prefixLen) != 0) {
+                continue;
+            }
+            char* endp = NULL;
+            long v = std::strtol(name + prefixLen, &endp, 10);
+            if (endp == name + prefixLen) {
+                continue;
+            }
+            if (std::strcmp(endp, ".csv") != 0) {
+                continue;
+            }
+            if (v > maxN) {
+                maxN = static_cast<int>(v);
+            }
+        }
+        closedir(d);
+    }
+
+    const int nextN = maxN + 1;
+    char buf[512];
+    std::snprintf(buf, sizeof(buf), "%s/%s%04d.csv", dataDir, prefix, nextN);
+    return std::string(buf);
+}
+
+}  // namespace
 
 template<size_t DOF>
 int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::systems::Wam<DOF>& wam)
@@ -22,7 +74,6 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     typedef typename barrett::math::Vector<3>::type task_vector_velocity_type;
     typedef typename barrett::math::Vector<3>::type task_control_type;
 
-    
     wam.gravityCompensate();
 
     ExternalTorque<DOF> externalTorque(pm.getExecutionManager());
@@ -80,7 +131,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
 
     task_vector_force_type desiredForce;
     desiredForce.setZero();
-    desiredForce[2] = 6.0;
+    desiredForce[2] = 2.0;
 
     // Smooth straight-line motion in task frame: sinusoidal velocity on axis 0
     const int velTrajAxis = 0;
@@ -96,6 +147,8 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     barrett::systems::connect(desiredForceSource.output, hybridControl.desiredForceIn);
     barrett::systems::connect(basetoTaskVelocity.velocityTaskOut, hybridControl.currentVelocityIn);
     barrett::systems::connect(basetoTaskForce.forceTaskOut, hybridControl.currentForceIn);
+
+
 
     // joint space command
     barrett::systems::connect(hybridControl.controlOutput, taskToBaseTransform.controlTaskIn);
@@ -131,28 +184,24 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     if (DOF >= 6) { target[5] =  0.0; }
     if (DOF >= 7) { target[6] =  0.0; }
 
-    // std::cout << "Press Enter to move to target position..." << std::endl;
+    //datalog
+    typedef barrett::systems::TupleGrouper<
+    task_vector_velocity_type,
+    task_vector_velocity_type,
+    task_vector_force_type,
+    task_vector_force_type> hybrid_task_log_grouper_t;
+    hybrid_task_log_grouper_t hybridTaskLogGroup("HybridTaskLogGroup");
+    pm.getExecutionManager()->startManaging(hybridTaskLogGroup);
+    typedef hybrid_task_log_grouper_t::tuple_type hybrid_task_log_record_t;
 
-    // // Important: clear buffer first
-    // std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    // std::cin.get();
+    barrett::systems::connect(desiredVelocityTraj.output, hybridTaskLogGroup.getInput<0>());
+    barrett::systems::connect(basetoTaskVelocity.velocityTaskOut, hybridTaskLogGroup.getInput<1>());
+    barrett::systems::connect(desiredForceSource.output, hybridTaskLogGroup.getInput<2>());
+    barrett::systems::connect(basetoTaskForce.forceTaskOut, hybridTaskLogGroup.getInput<3>());
 
-    // std::cout << "Moving to target..." << std::endl;
-    // wam.moveTo(target, true);
+    const size_t kHybridLogPeriodMult = 1;
 
-    // std::cout << "At target position." << std::endl;
-    // std::cout << "Apply force to the robot now." << std::endl;
-    // std::cout << "Press Enter to go back home." << std::endl;
-
-    // // Clear input buffer
-    // std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    // std::cin.get();
-
-    // std::cout << "Returning home..." << std::endl;
-
-    // wam.moveHome();
-
-    // std::cout << "Done." << std::endl;
+    HybridTaskCsvLogger<hybrid_task_log_record_t>* hybridTaskLogger = NULL;
 
     bool contactActive = false;
 
@@ -162,13 +211,33 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     std::cout << "  x : stop contact controller\n";
     std::cout << "  ENTER : move home\n";
     std::cout << "  q : quit\n";
+    std::cout << "  (datalog: ../../data/hybrid_task_datalog_NNNN.csv while contact is active)\n";
+
+    barrett::systems::ExecutionManager* const em = pm.getExecutionManager();
+
+    auto stopHybridDatalog = [&]() {
+        if (hybridTaskLogger == NULL) {
+            return;
+        }
+        barrett::systems::disconnect(hybridTaskLogger->input);
+        hybridTaskLogger->closeFile();
+        delete hybridTaskLogger;
+        hybridTaskLogger = NULL;
+    };
+
+    auto startHybridDatalog = [&]() {
+        const std::string logPath = nextHybridTaskLogPath();
+        hybridTaskLogger = new HybridTaskCsvLogger<hybrid_task_log_record_t>(
+            em, logPath, kHybridLogPeriodMult, "HybridTaskCsvLogger");
+        barrett::systems::forceConnect(hybridTaskLogGroup.output, hybridTaskLogger->input);
+        std::cout << "CSV datalog (task frame) -> " << logPath << std::endl;
+    };
 
     while (true) {
         std::cout << "\nEnter command: ";
 
-        // Check if user pressed ENTER only
         if (std::cin.peek() == '\n') {
-            std::cin.get();  // consume newline
+            std::cin.get();
 
             std::cout << "Returning home..." << std::endl;
             wam.moveHome();
@@ -180,11 +249,11 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
         char cmd;
         std::cin >> cmd;
 
-        // Clear remaining input
         std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 
         if (cmd == 'q') {
             std::cout << "Exiting..." << std::endl;
+            stopHybridDatalog();
             break;
         }
 
@@ -202,6 +271,8 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
 
                     hybridControl.resetState();
                     desiredVelocityTraj.resetPhase();
+
+                    startHybridDatalog();
 
                     // Use wam.input (jtSum JT_INPUT): trackReferenceSignal routes through
                     // supervisory Converter, which can leave SC undefined when jtSum runs
@@ -221,6 +292,8 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
 
                     barrett::systems::disconnect(wam.input);
                     hybridControl.resetState();
+
+                    stopHybridDatalog();
 
                     contactActive = false;
                 } else {
