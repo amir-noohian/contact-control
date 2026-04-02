@@ -43,6 +43,8 @@ barrett/units.h
 -
 
 ../include/task_space_controller.hpp
+algorithm
+-
 barrett/detail/ca_macro.h
 -
 barrett/systems.h
@@ -57,6 +59,10 @@ boost/numeric/ublas/operation.hpp
 -
 
 ../include/utilities.hpp
+chrono
+-
+cmath
+-
 barrett/detail/ca_macro.h
 -
 barrett/systems.h

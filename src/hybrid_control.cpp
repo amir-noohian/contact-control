@@ -21,7 +21,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     typedef typename barrett::math::Vector<3>::type task_vector_force_type;
     typedef typename barrett::math::Vector<3>::type task_vector_velocity_type;
     typedef typename barrett::math::Vector<3>::type task_control_type;
-   
+
     
     wam.gravityCompensate();
 
@@ -76,18 +76,23 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     barrett::systems::connect(wam.toolVelocity.output, basetoTaskVelocity.velocityBaseIn);
     barrett::systems::connect(basetoTaskTransform.baseToTaskOut, basetoTaskVelocity.baseToTaskIn);
 
-    // task space controller
+    // task space controller (Kv, Kd, Kf, Ki defaults in task_space_controller.hpp)
+
     task_vector_force_type desiredForce;
-    task_vector_velocity_type desiredVelocity;
-    desiredVelocity.setZero();
     desiredForce.setZero();
-    desiredVelocity[0] = 0.2;
     desiredForce[2] = 6.0;
 
-    ConstantOutput<task_vector_velocity_type> desiredVelocitySource(pm.getExecutionManager(), desiredVelocity, "DesiredVelocity");
+    // Smooth straight-line motion in task frame: sinusoidal velocity on axis 0
+    const int velTrajAxis = 0;
+    const double velTrajPeakM_s = 0.2;
+    const double velTrajPeriod_s = 6.0;
+    TaskVelocitySinusoid<task_vector_velocity_type> desiredVelocityTraj(
+        pm.getExecutionManager(), velTrajAxis, velTrajPeakM_s, velTrajPeriod_s,
+        "DesiredVelTraj");
+
     ConstantOutput<task_vector_force_type> desiredForceSource(pm.getExecutionManager(), desiredForce, "DesiredForce");
-    
-    barrett::systems::connect(desiredVelocitySource.output, hybridControl.desiredVelocityIn);
+
+    barrett::systems::connect(desiredVelocityTraj.output, hybridControl.desiredVelocityIn);
     barrett::systems::connect(desiredForceSource.output, hybridControl.desiredForceIn);
     barrett::systems::connect(basetoTaskVelocity.velocityTaskOut, hybridControl.currentVelocityIn);
     barrett::systems::connect(basetoTaskForce.forceTaskOut, hybridControl.currentForceIn);
@@ -195,6 +200,9 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
                 if (!contactActive) {
                     std::cout << "Starting contact controller..." << std::endl;
 
+                    hybridControl.resetState();
+                    desiredVelocityTraj.resetPhase();
+
                     // Use wam.input (jtSum JT_INPUT): trackReferenceSignal routes through
                     // supervisory Converter, which can leave SC undefined when jtSum runs
                     // (jtSum uses undefined-as-zero), so only gravity appeared in jtSum.
@@ -212,6 +220,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
                     std::cout << "Stopping contact controller..." << std::endl;
 
                     barrett::systems::disconnect(wam.input);
+                    hybridControl.resetState();
 
                     contactActive = false;
                 } else {
