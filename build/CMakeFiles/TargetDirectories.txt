@@ -1,3 +1,0 @@
-/home/rowley/amir/contact_control/build/CMakeFiles/rebuild_cache.dir
-/home/rowley/amir/contact_control/build/CMakeFiles/edit_cache.dir
-/home/rowley/amir/contact_control/build/CMakeFiles/hybrid_control.dir
