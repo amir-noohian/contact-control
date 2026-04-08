@@ -6,6 +6,10 @@
 
 #IncludeRegexTransform: 
 
+../include/beta_zeus_link.hpp
+eigen3/Eigen/Dense
+-
+
 ../include/bt_transformation.hpp
 barrett/detail/ca_macro.h
 -
@@ -13,6 +17,40 @@ barrett/systems.h
 -
 boost/numeric/ublas/matrix.hpp
 -
+
+../include/dynamic_external_torque.hpp
+barrett/detail/ca_macro.h
+-
+barrett/systems.h
+-
+barrett/units.h
+-
+
+../include/dynamic_external_wrench.hpp
+barrett/units.h
+-
+barrett/systems.h
+-
+barrett/detail/ca_macro.h
+-
+Eigen/Dense
+-
+string
+-
+
+../include/dynamics.hpp
+eigen3/Eigen/Dense
+-
+barrett/units.h
+-
+barrett/systems.h
+-
+barrett/math/kinematics.h
+-
+beta_zeus_link.hpp
+../include/beta_zeus_link.hpp
+regressor_W.hpp
+../include/regressor_W.hpp
 
 ../include/external_torque.hpp
 barrett/detail/ca_macro.h
@@ -58,6 +96,14 @@ barrett/systems.h
 barrett/units.h
 -
 
+../include/regressor_W.hpp
+eigen3/Eigen/Dense
+-
+array
+-
+cmath
+-
+
 ../include/task_space_controller.hpp
 algorithm
 -
@@ -91,6 +137,12 @@ Eigen/Core
 /home/rowley/amir/contact_control/src/hybrid_control.cpp
 external_torque.hpp
 /home/rowley/amir/contact_control/src/external_torque.hpp
+dynamics.hpp
+/home/rowley/amir/contact_control/src/dynamics.hpp
+dynamic_external_torque.hpp
+/home/rowley/amir/contact_control/src/dynamic_external_torque.hpp
+dynamic_external_wrench.hpp
+/home/rowley/amir/contact_control/src/dynamic_external_wrench.hpp
 external_wrench.hpp
 /home/rowley/amir/contact_control/src/external_wrench.hpp
 jacobian.hpp

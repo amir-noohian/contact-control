@@ -13,15 +13,13 @@ translational and rotational parts of the Jacobian.
 #include <Eigen/Dense>
 #include <string>
 
-using namespace barrett;
-
 template <size_t DOF>
-class ExternalWrench : public systems::System {
+class ExternalWrench : public barrett::systems::System {
     BARRETT_UNITS_TEMPLATE_TYPEDEFS(DOF);
 
   public:
     Input<jt_type> externalTorqueIn;
-    Input<math::Matrix<6, DOF> > jacobianIn;
+    Input<barrett::math::Matrix<6, DOF> > jacobianIn;
 
     Output<cf_type> forceOut;
     Output<ct_type> momentOut;
@@ -33,7 +31,7 @@ class ExternalWrench : public systems::System {
   public:
     explicit ExternalWrench(barrett::systems::ExecutionManager* em,
                             const std::string& sysName = "ExternalWrench")
-        : System(sysName)
+        : barrett::systems::System(sysName)
         , externalTorqueIn(this)
         , jacobianIn(this)
         , forceOut(this, &forceOutputValue)
@@ -55,7 +53,7 @@ class ExternalWrench : public systems::System {
 
   protected:
     jt_type tauExt;
-    math::Matrix<6, DOF> J;
+    barrett::math::Matrix<6, DOF> J;
 
     cf_type force;
     ct_type moment;
@@ -100,7 +98,6 @@ class ExternalWrench : public systems::System {
         double lambda) {
 
         // Solve Jpart^T * x = tau
-        // Equivalent damped least-squares solution:
         // x = (Jpart * Jpart^T + lambda I)^(-1) * Jpart * tau
 
         Eigen::Matrix3d A = Jpart * Jpart.transpose();

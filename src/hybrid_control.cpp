@@ -1,4 +1,7 @@
 #include "external_torque.hpp"
+#include "dynamics.hpp"
+#include "dynamic_external_torque.hpp"
+#include "dynamic_external_wrench.hpp"
 #include "external_wrench.hpp"
 #include "jacobian.hpp"
 #include "utilities.hpp"
@@ -78,6 +81,9 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
 
     ExternalTorque<DOF> externalTorque(pm.getExecutionManager());
     ExternalWrench<DOF> externalWrench(pm.getExecutionManager());
+    Dynamics<DOF> dynamics(pm.getExecutionManager());
+    DynamicExternalTorque<DOF> dynamicExternalTorque(pm.getExecutionManager());
+    DynamicExternalWrench<DOF> dynamicExternalWrench(pm.getExecutionManager());
     ToolJacobianOutput<DOF> toolJacobian(wam, pm.getExecutionManager());
     LinearCartesianVelocity<DOF> linearCartesianVelocity(pm.getExecutionManager());
     BaseToTaskTransform<DOF> basetoTaskTransform(pm.getExecutionManager());
@@ -86,11 +92,25 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     HybridForceVelocityControl<DOF> hybridControl(pm.getExecutionManager());
     TaskToBaseControl<DOF> taskToBaseTransform(pm.getExecutionManager());
     BaseControlToJointTorque<DOF> controlToJoint(pm.getExecutionManager());
+    JointTorqueWithCompensation<DOF> torqueSum(pm.getExecutionManager());
+
+    // acceleration
+    double h_omega_p = 25.0;
+    barrett::systems::FirstOrderFilter<jv_type> hp1;
+    hp1.setHighPass(jv_type(h_omega_p), jv_type(h_omega_p));
+    barrett::systems::Gain<jv_type, double, ja_type> jaWAM(1.0);
+    pm.getExecutionManager()->startManaging(hp1);
+
+    barrett::systems::FirstOrderFilter<ja_type> jaFilter;
+    ja_type l_omega_p = ja_type::Constant(50.0);
+    jaFilter.setLowPass(l_omega_p);
+    pm.getExecutionManager()->startManaging(jaFilter);
 
     // barrett::systems::Summer<jt_type, 2> customjtSum;
     // pm.getExecutionManager()->startManaging(customjtSum);
 
     barrett::systems::PrintToStream<cf_type> printCartesianForce(pm.getExecutionManager(), "cartesianForce: ");
+    barrett::systems::PrintToStream<cf_type> printdynamicCartesianForce(pm.getExecutionManager(), "dynamicCartesianForce: ");
     barrett::systems::PrintToStream<cp_type> printCartesianPosition(pm.getExecutionManager(), "cartesianPosition: ");
     barrett::systems::PrintToStream<cv_type> printCartesianVelocity(pm.getExecutionManager(), "cartesianVelocity: ");
     barrett::systems::PrintToStream<jacobian_type> printJacobian(pm.getExecutionManager(), "Jacobian: ");
@@ -108,6 +128,24 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     // barrett::systems::connect(wam.gravity.output, customjtSum.getInput(0));
     // barrett::systems::connect(wam.supervisoryController.output, customjtSum.getInput(1));
 
+    // acceleration
+    barrett::systems::connect(wam.jvOutput, hp1.input);
+    barrett::systems::connect(hp1.output, jaWAM.input);
+    barrett::systems::connect(jaWAM.output, jaFilter.input);
+
+    //dynamics 
+    barrett::systems::connect(wam.jpOutput, dynamics.jpInputDynamics);
+    barrett::systems::connect(wam.jvOutput, dynamics.jvInputDynamics);
+    barrett::systems::connect(jaFilter.output, dynamics.jaInputDynamics);
+
+    // dynamic external torque
+    barrett::systems::connect(dynamics.dynamicsFeedFWD, dynamicExternalTorque.wamDynamicsIn);
+    barrett::systems::connect(wam.jtSum.output, dynamicExternalTorque.wamTorqueSumIn);
+
+    // dynamics external force and momentum
+    barrett::systems::connect(dynamicExternalTorque.wamExternalTorqueOut, dynamicExternalWrench.dynamicExternalTorqueIn);
+    barrett::systems::connect(toolJacobian.output, dynamicExternalWrench.jacobianIn);
+
     // external torque
     barrett::systems::connect(wam.gravity.output, externalTorque.wamGravityIn);
     barrett::systems::connect(wam.jtSum.output, externalTorque.wamTorqueSumIn);
@@ -121,7 +159,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     barrett::systems::connect(wam.jvOutput, linearCartesianVelocity.jointVelocityIn);
 
     // base to task space transformation for force
-    barrett::systems::connect(externalWrench.forceOut, basetoTaskForce.forceBaseIn);
+    barrett::systems::connect(dynamicExternalWrench.forceOut, basetoTaskForce.forceBaseIn);
     barrett::systems::connect(basetoTaskTransform.baseToTaskOut, basetoTaskForce.baseToTaskIn);
     // base to task space transformation for velocity
     barrett::systems::connect(wam.toolVelocity.output, basetoTaskVelocity.velocityBaseIn);
@@ -131,7 +169,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
 
     task_vector_force_type desiredForce;
     desiredForce.setZero();
-    desiredForce[2] = 2.0;
+    desiredForce[2] = 3.0;
 
     // Smooth straight-line motion in task frame: sinusoidal velocity on axis 0
     const int velTrajAxis = 0;
@@ -149,26 +187,32 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     barrett::systems::connect(basetoTaskForce.forceTaskOut, hybridControl.currentForceIn);
 
 
-
     // joint space command
     barrett::systems::connect(hybridControl.controlOutput, taskToBaseTransform.controlTaskIn);
     barrett::systems::connect(basetoTaskTransform.baseToTaskOut, taskToBaseTransform.baseToTaskIn);
     barrett::systems::connect(taskToBaseTransform.controlBaseOut, controlToJoint.controlBaseIn);
     barrett::systems::connect(toolJacobian.output, controlToJoint.jacobianIn);
 
+    // joint space command with dynamics compensation
+    barrett::systems::connect(controlToJoint.jointTorqueOut, torqueSum.controlTorqueIn);
+    barrett::systems::connect(dynamics.dynamicsFeedFWD, torqueSum.dynamicsIn);
+    barrett::systems::connect(wam.gravity.output, torqueSum.gravityIn);
+
+
     // printing outputs
     barrett::systems::connect(externalWrench.forceOut, printCartesianForce.input);
     // barrett::systems::connect(wam.toolPosition.output, printCartesianPosition.input);
-    barrett::systems::connect(wam.toolVelocity.output, printCartesianVelocity.input);
+    // barrett::systems::connect(wam.toolVelocity.output, printCartesianVelocity.input);
     // barrett::systems::connect(toolJacobian.output, printJacobian.input);
     // barrett::systems::connect(externalTorque.wamExternalTorqueOut, printJointTorque.input);
-    barrett::systems::connect(linearCartesianVelocity.linearVelocityOut, printCartesianVelocityJacobian.input);
-    barrett::systems::connect(basetoTaskForce.forceTaskOut, printTaskForce.input);
-    barrett::systems::connect(basetoTaskVelocity.velocityTaskOut, printTaskVelocity.input);
+    // barrett::systems::connect(linearCartesianVelocity.linearVelocityOut, printCartesianVelocityJacobian.input);
+    // barrett::systems::connect(basetoTaskForce.forceTaskOut, printTaskForce.input);
+    // barrett::systems::connect(basetoTaskVelocity.velocityTaskOut, printTaskVelocity.input);
     // barrett::systems::connect(hybridControl.controlOutput, printTaskControl.input);
     // barrett::systems::connect(controlToJoint.jointTorqueOut, printJointCommand.input);
     // barrett::systems::connect(customjtSum.output, printcustomjtSum.input);
-    barrett::systems::connect(wam.jtSum.output, printjtSum.input);
+    // barrett::systems::connect(wam.jtSum.output, printjtSum.input);
+    barrett::systems::connect(dynamicExternalWrench.forceOut, printdynamicCartesianForce.input);
 
 
     jp_type target;
@@ -177,9 +221,9 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     // Example only. Replace with a safe pose for your robot.
     // For a 4-DOF WAM, set only the first 4 entries.
     if (DOF >= 1) { target[0] =  0.0; }
-    if (DOF >= 2) { target[1] =  0.9; }
+    if (DOF >= 2) { target[1] =  1.21; }
     if (DOF >= 3) { target[2] =  0.0; }
-    if (DOF >= 4) { target[3] =  1.85; }
+    if (DOF >= 4) { target[3] =  1.90; }
     if (DOF >= 5) { target[4] =  0.0; }
     if (DOF >= 6) { target[5] =  0.0; }
     if (DOF >= 7) { target[6] =  0.0; }
@@ -278,7 +322,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
                     // supervisory Converter, which can leave SC undefined when jtSum runs
                     // (jtSum uses undefined-as-zero), so only gravity appeared in jtSum.
                     wam.idle();
-                    barrett::systems::forceConnect(controlToJoint.jointTorqueOut, wam.input);
+                    barrett::systems::forceConnect(torqueSum.totalTorqueOut, wam.input);
 
                     contactActive = true;
                 } else {

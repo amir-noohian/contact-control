@@ -108,3 +108,56 @@ class BaseControlToJointTorque : public barrett::systems::System {
   private:
     DISALLOW_COPY_AND_ASSIGN(BaseControlToJointTorque);
 };
+
+
+template <size_t DOF>
+class JointTorqueWithCompensation : public barrett::systems::System {
+    BARRETT_UNITS_TEMPLATE_TYPEDEFS(DOF);
+
+  public:
+    Input<jt_type> controlTorqueIn;
+    Input<jt_type> dynamicsIn;
+    Input<jt_type> gravityIn;
+
+    Output<jt_type> totalTorqueOut;
+
+    explicit JointTorqueWithCompensation(
+        barrett::systems::ExecutionManager* em,
+        const std::string& sysName = "JointTorqueWithCompensation")
+        : System(sysName)
+        , controlTorqueIn(this)
+        , dynamicsIn(this)
+        , gravityIn(this)
+        , totalTorqueOut(this, &totalTorqueOutputValue) {
+        if (em != NULL) {
+            em->startManaging(*this);
+        }
+    }
+
+    virtual ~JointTorqueWithCompensation() {
+        this->mandatoryCleanUp();
+    }
+
+  protected:
+    typename Output<jt_type>::Value* totalTorqueOutputValue;
+
+    jt_type controlTorque;
+    jt_type dynamics;
+    jt_type gravity;
+    jt_type totalTorque;
+
+    virtual void operate() {
+        controlTorque = controlTorqueIn.getValue();
+        dynamics = dynamicsIn.getValue();
+        gravity = gravityIn.getValue();
+
+        for (size_t i = 0; i < DOF; ++i) {
+            totalTorque[i] = controlTorque[i] + dynamics[i] - gravity[i];
+        }
+
+        totalTorqueOutputValue->setData(&totalTorque);
+    }
+
+  private:
+    DISALLOW_COPY_AND_ASSIGN(JointTorqueWithCompensation);
+};
