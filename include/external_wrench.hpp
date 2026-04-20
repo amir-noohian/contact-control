@@ -70,7 +70,15 @@ class ExternalWrench : public barrett::systems::System {
     double lambdaMoment_;
 
     virtual void operate() {
-        tauExt = externalTorqueIn.getValue();
+
+
+        // tauExt = externalTorqueIn.getValue();
+        if (externalTorqueIn.valueDefined()) {
+            tauExt = externalTorqueIn.getValue();
+        } else {
+            tauExt.setZero();
+        }
+
         J = jacobianIn.getValue();
 
         tauEigen = tauExt;

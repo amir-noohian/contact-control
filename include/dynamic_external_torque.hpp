@@ -39,7 +39,7 @@ class DynamicExternalTorque : public barrett::systems::System {
     virtual void operate() {
         jtSum = wamTorqueSumIn.getValue();
         dynamics = wamDynamicsIn.getValue();
-        externalTorque = -jtSum + dynamics;
+        externalTorque = jtSum - dynamics;
         jtOutputValue->setData(&externalTorque);
     }
 

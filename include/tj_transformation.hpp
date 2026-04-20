@@ -39,7 +39,12 @@ class TaskToBaseControl : public barrett::systems::System {
     transform_type Rtb;
 
     virtual void operate() {
-        controlTask = controlTaskIn.getValue();
+        // controlTask = controlTaskIn.getValue();
+        if (controlTaskIn.valueDefined()) {
+            controlTask = controlTaskIn.getValue();
+        } else {
+            controlTask << 0.0, 0.0, 0.0;
+        }
         Rtb = baseToTaskIn.getValue();
 
         // base = Rtb^T * task
@@ -92,7 +97,12 @@ class BaseControlToJointTorque : public barrett::systems::System {
     jt_type tau;
 
     virtual void operate() {
-        controlBase = controlBaseIn.getValue();
+        // controlBase = controlBaseIn.getValue();
+        if (controlBaseIn.valueDefined()) {
+            controlBase = controlBaseIn.getValue();
+        } else {
+            controlBase << 0.0, 0.0, 0.0;
+        }
         J = jacobianIn.getValue();
 
         // tau_i = J(0,i)*fx + J(1,i)*fy + J(2,i)*fz
@@ -147,12 +157,28 @@ class JointTorqueWithCompensation : public barrett::systems::System {
     jt_type totalTorque;
 
     virtual void operate() {
-        controlTorque = controlTorqueIn.getValue();
+        bool ctrlDef = controlTorqueIn.valueDefined();
+        bool dynDef = dynamicsIn.valueDefined();
+        bool gravDef = gravityIn.valueDefined();
+
+        std::cout << "JointTorqueWithCompensation: "
+                  << "control=" << ctrlDef
+                  << " dynamics=" << dynDef
+                  << " gravity=" << gravDef
+                  << std::endl;
+
+        // controlTorque = controlTorqueIn.getValue();
+        if (controlTorqueIn.valueDefined()) {
+            controlTorque = controlTorqueIn.getValue();
+        } else {
+            controlTorque << 0.0, 0.0, 0.0, 0.0;
+        }
+
         dynamics = dynamicsIn.getValue();
         gravity = gravityIn.getValue();
 
         for (size_t i = 0; i < DOF; ++i) {
-            totalTorque[i] = controlTorque[i] + dynamics[i] - gravity[i];
+            totalTorque[i] = controlTorque[i] + 0.0 * dynamics[i] - 0.0 * gravity[i];
         }
 
         totalTorqueOutputValue->setData(&totalTorque);

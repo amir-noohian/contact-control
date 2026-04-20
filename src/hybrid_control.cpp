@@ -9,6 +9,8 @@
 #include "task_space_controller.hpp"
 #include "tj_transformation.hpp"
 #include "hybrid_task_csv_logger.hpp"
+#include "sample_delay.hpp"
+#include "jointtorque.hpp"
 
 #include <barrett/systems/tuple_grouper.h>
 #include <barrett/systems.h>
@@ -77,7 +79,6 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     typedef typename barrett::math::Vector<3>::type task_vector_velocity_type;
     typedef typename barrett::math::Vector<3>::type task_control_type;
 
-    wam.gravityCompensate();
 
     ExternalTorque<DOF> externalTorque(pm.getExecutionManager());
     ExternalWrench<DOF> externalWrench(pm.getExecutionManager());
@@ -93,6 +94,9 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     TaskToBaseControl<DOF> taskToBaseTransform(pm.getExecutionManager());
     BaseControlToJointTorque<DOF> controlToJoint(pm.getExecutionManager());
     JointTorqueWithCompensation<DOF> torqueSum(pm.getExecutionManager());
+    JointTorqueOutput<DOF> jointTorqueOut(wam, pm.getExecutionManager());
+    barrett::systems::Summer<jt_type, 2> customjtSum;
+    pm.getExecutionManager()->startManaging(customjtSum);
 
     // acceleration
     double h_omega_p = 25.0;
@@ -106,8 +110,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     jaFilter.setLowPass(l_omega_p);
     pm.getExecutionManager()->startManaging(jaFilter);
 
-    // barrett::systems::Summer<jt_type, 2> customjtSum;
-    // pm.getExecutionManager()->startManaging(customjtSum);
+
 
     barrett::systems::PrintToStream<cf_type> printCartesianForce(pm.getExecutionManager(), "cartesianForce: ");
     barrett::systems::PrintToStream<cf_type> printdynamicCartesianForce(pm.getExecutionManager(), "dynamicCartesianForce: ");
@@ -120,20 +123,27 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     barrett::systems::PrintToStream<task_vector_velocity_type> printTaskVelocity(pm.getExecutionManager(), "toolVelocity: ");
     barrett::systems::PrintToStream<task_control_type> printTaskControl(pm.getExecutionManager(), "taskControl: ");
     barrett::systems::PrintToStream<jt_type> printJointCommand(pm.getExecutionManager(), "jointCommand: ");
-    // barrett::systems::PrintToStream<jt_type> printcustomjtSum(pm.getExecutionManager(), "customjtSum: ");
+    barrett::systems::PrintToStream<jt_type> printcustomjtSum(pm.getExecutionManager(), "customjtSum: ");
     barrett::systems::PrintToStream<jt_type> printjtSum(pm.getExecutionManager(), "jtSum: ");
+    barrett::systems::PrintToStream<jt_type> printGravity(pm.getExecutionManager(), "gravity: ");
+    barrett::systems::PrintToStream<jt_type> printTorque(pm.getExecutionManager(), "jointTorque: ");
+    barrett::systems::PrintToStream<jt_type> printSC(pm.getExecutionManager(), "supervisoryController: ");
+    barrett::systems::PrintToStream<jt_type> printDynamics(pm.getExecutionManager(), "dynamics: ");
+
+    // delay for force
+    task_vector_force_type zeroTaskForce;
+    zeroTaskForce.setZero();
+    SampleDelay<task_vector_force_type> delayedTaskForce(pm.getExecutionManager(), zeroTaskForce, "DelayedTaskForce");
 
 
-    // jtsum for external torque
-    // barrett::systems::connect(wam.gravity.output, customjtSum.getInput(0));
-    // barrett::systems::connect(wam.supervisoryController.output, customjtSum.getInput(1));
+
 
     // acceleration
     barrett::systems::connect(wam.jvOutput, hp1.input);
     barrett::systems::connect(hp1.output, jaWAM.input);
     barrett::systems::connect(jaWAM.output, jaFilter.input);
 
-    //dynamics 
+    // dynamics 
     barrett::systems::connect(wam.jpOutput, dynamics.jpInputDynamics);
     barrett::systems::connect(wam.jvOutput, dynamics.jvInputDynamics);
     barrett::systems::connect(jaFilter.output, dynamics.jaInputDynamics);
@@ -146,11 +156,16 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     barrett::systems::connect(dynamicExternalTorque.wamExternalTorqueOut, dynamicExternalWrench.dynamicExternalTorqueIn);
     barrett::systems::connect(toolJacobian.output, dynamicExternalWrench.jacobianIn);
 
+    // jtsum for external torque
+    barrett::systems::connect(wam.gravity.output, customjtSum.getInput(0));
+    barrett::systems::connect(controlToJoint.jointTorqueOut, customjtSum.getInput(1));
+    // barrett::systems::connect(wam.supervisoryController.output, customjtSum.getInput(1));
+
     // external torque
     barrett::systems::connect(wam.gravity.output, externalTorque.wamGravityIn);
-    barrett::systems::connect(wam.jtSum.output, externalTorque.wamTorqueSumIn);
+    barrett::systems::connect(customjtSum.output, externalTorque.wamTorqueSumIn);
 
-    //external force and momentum
+    // external force and momentum
     barrett::systems::connect(externalTorque.wamExternalTorqueOut, externalWrench.externalTorqueIn);
     barrett::systems::connect(toolJacobian.output, externalWrench.jacobianIn);
 
@@ -159,8 +174,9 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     barrett::systems::connect(wam.jvOutput, linearCartesianVelocity.jointVelocityIn);
 
     // base to task space transformation for force
-    barrett::systems::connect(dynamicExternalWrench.forceOut, basetoTaskForce.forceBaseIn);
+    barrett::systems::connect(externalWrench.forceOut, basetoTaskForce.forceBaseIn);
     barrett::systems::connect(basetoTaskTransform.baseToTaskOut, basetoTaskForce.baseToTaskIn);
+
     // base to task space transformation for velocity
     barrett::systems::connect(wam.toolVelocity.output, basetoTaskVelocity.velocityBaseIn);
     barrett::systems::connect(basetoTaskTransform.baseToTaskOut, basetoTaskVelocity.baseToTaskIn);
@@ -169,7 +185,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
 
     task_vector_force_type desiredForce;
     desiredForce.setZero();
-    desiredForce[2] = 3.0;
+    desiredForce[2] = -5.0;
 
     // Smooth straight-line motion in task frame: sinusoidal velocity on axis 0
     const int velTrajAxis = 0;
@@ -185,6 +201,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     barrett::systems::connect(desiredForceSource.output, hybridControl.desiredForceIn);
     barrett::systems::connect(basetoTaskVelocity.velocityTaskOut, hybridControl.currentVelocityIn);
     barrett::systems::connect(basetoTaskForce.forceTaskOut, hybridControl.currentForceIn);
+    // barrett::systems::connect(delayedTaskForce.output, hybridControl.currentForceIn);
 
 
     // joint space command
@@ -201,18 +218,22 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
 
     // printing outputs
     barrett::systems::connect(externalWrench.forceOut, printCartesianForce.input);
+    // barrett::systems::connect(dynamicExternalWrench.forceOut, printdynamicCartesianForce.input);
     // barrett::systems::connect(wam.toolPosition.output, printCartesianPosition.input);
     // barrett::systems::connect(wam.toolVelocity.output, printCartesianVelocity.input);
     // barrett::systems::connect(toolJacobian.output, printJacobian.input);
-    // barrett::systems::connect(externalTorque.wamExternalTorqueOut, printJointTorque.input);
+    barrett::systems::connect(externalTorque.wamExternalTorqueOut, printJointTorque.input);
     // barrett::systems::connect(linearCartesianVelocity.linearVelocityOut, printCartesianVelocityJacobian.input);
     // barrett::systems::connect(basetoTaskForce.forceTaskOut, printTaskForce.input);
     // barrett::systems::connect(basetoTaskVelocity.velocityTaskOut, printTaskVelocity.input);
     // barrett::systems::connect(hybridControl.controlOutput, printTaskControl.input);
-    // barrett::systems::connect(controlToJoint.jointTorqueOut, printJointCommand.input);
-    // barrett::systems::connect(customjtSum.output, printcustomjtSum.input);
+    barrett::systems::connect(controlToJoint.jointTorqueOut, printJointCommand.input);
+    barrett::systems::connect(customjtSum.output, printcustomjtSum.input);
     // barrett::systems::connect(wam.jtSum.output, printjtSum.input);
-    barrett::systems::connect(dynamicExternalWrench.forceOut, printdynamicCartesianForce.input);
+    // barrett::systems::connect(wam.gravity.output, printGravity.input);
+    // barrett::systems::connect(jointTorqueOut.output, printTorque.input);
+    // barrett::systems::connect(wam.supervisoryController.output, printSC.input);
+    // barrett::systems::connect(dynamics.dynamicsFeedFWD, printDynamics.input);
 
 
     jp_type target;
@@ -220,10 +241,10 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
 
     // Example only. Replace with a safe pose for your robot.
     // For a 4-DOF WAM, set only the first 4 entries.
-    if (DOF >= 1) { target[0] =  0.0; }
-    if (DOF >= 2) { target[1] =  1.21; }
+    if (DOF >= 1) { target[0] =  0.0; } //
+    if (DOF >= 2) { target[1] =  1.21; } // whiteboard 1.21 // 1.12 kitchen scale
     if (DOF >= 3) { target[2] =  0.0; }
-    if (DOF >= 4) { target[3] =  1.90; }
+    if (DOF >= 4) { target[3] =  1.90; } // whiteboard 1.90 // 1.12 kitchen scale
     if (DOF >= 5) { target[4] =  0.0; }
     if (DOF >= 6) { target[5] =  0.0; }
     if (DOF >= 7) { target[6] =  0.0; }
@@ -241,7 +262,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     barrett::systems::connect(desiredVelocityTraj.output, hybridTaskLogGroup.getInput<0>());
     barrett::systems::connect(basetoTaskVelocity.velocityTaskOut, hybridTaskLogGroup.getInput<1>());
     barrett::systems::connect(desiredForceSource.output, hybridTaskLogGroup.getInput<2>());
-    barrett::systems::connect(basetoTaskForce.forceTaskOut, hybridTaskLogGroup.getInput<3>());
+    barrett::systems::connect(delayedTaskForce.output, hybridTaskLogGroup.getInput<3>());
 
     const size_t kHybridLogPeriodMult = 1;
 
@@ -276,6 +297,8 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
         barrett::systems::forceConnect(hybridTaskLogGroup.output, hybridTaskLogger->input);
         std::cout << "CSV datalog (task frame) -> " << logPath << std::endl;
     };
+
+    wam.gravityCompensate();
 
     while (true) {
         std::cout << "\nEnter command: ";
@@ -313,6 +336,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
                 if (!contactActive) {
                     std::cout << "Starting contact controller..." << std::endl;
 
+                    delayedTaskForce.reset(zeroTaskForce);
                     hybridControl.resetState();
                     desiredVelocityTraj.resetPhase();
 
@@ -321,8 +345,18 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
                     // Use wam.input (jtSum JT_INPUT): trackReferenceSignal routes through
                     // supervisory Converter, which can leave SC undefined when jtSum runs
                     // (jtSum uses undefined-as-zero), so only gravity appeared in jtSum.
+                    // wam.idle(); // this disconnects supervisoryController (PID input)
+                    // barrett::systems::connect(torqueSum.totalTorqueOut, wam.input);
                     wam.idle();
-                    barrett::systems::forceConnect(torqueSum.totalTorqueOut, wam.input);
+                    // barrett::systems::reconnect(torqueSum.totalTorqueOut, customjtSum.getInput(1));
+                    wam.trackReferenceSignal(controlToJoint.jointTorqueOut);
+                    // wam.idle();
+                    // barrett::systems::connect(controlToJoint.jointTorqueOut, wam.input);
+                    // barrett::systems::forceConnect(wam.supervisoryController.output, customjtSum.getInput(1));
+
+
+
+
 
                     contactActive = true;
                 } else {
@@ -335,6 +369,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
                     std::cout << "Stopping contact controller..." << std::endl;
 
                     barrett::systems::disconnect(wam.input);
+                    delayedTaskForce.reset(zeroTaskForce);
                     hybridControl.resetState();
 
                     stopHybridDatalog();

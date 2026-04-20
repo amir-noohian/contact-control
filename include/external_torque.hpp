@@ -1,4 +1,4 @@
-// External torque is estimated using only gravity rather than dynamics.
+// External torque: (jtSum - gravity)
 
 #pragma once
 
@@ -38,9 +38,15 @@ class ExternalTorque : public barrett::systems::System {
 
     virtual void operate() {
 
-        jtSum = wamTorqueSumIn.getValue();
+        // jtSum = wamTorqueSumIn.getValue();
+        if (wamTorqueSumIn.valueDefined()) {
+            jtSum = wamTorqueSumIn.getValue();
+        } else {
+            jtSum << 0.0, 0.0, 0,0, 0.0;
+        }
+
         gravity = wamGravityIn.getValue();
-        externalTorque = -jtSum + gravity;
+        externalTorque = jtSum - gravity;
         jtOutputValue->setData(&externalTorque);
     }
 

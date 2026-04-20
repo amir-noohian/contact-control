@@ -20,9 +20,9 @@ class HybridForceVelocityControl : public barrett::systems::System {
     typedef typename barrett::math::Vector<3>::type task_control_type;
 
     /** Default gains for the stock selection matrix (velocity on task axis 0, force on 2). */
-    static constexpr double defaultKvAxis0 = 100.0;
+    static constexpr double defaultKvAxis0 = 1.0;
     static constexpr double defaultKdAxis0 = 0.0;
-    static constexpr double defaultKfAxis2 = 0.5;
+    static constexpr double defaultKfAxis2 = 0.0;
     static constexpr double defaultKiAxis2 = 0.0;
     static constexpr double defaultForceIntegralLimit = 25.0;
 
@@ -151,7 +151,12 @@ class HybridForceVelocityControl : public barrett::systems::System {
         vCur = currentVelocityIn.getValue();
 
         fDes = desiredForceIn.getValue();
-        fCur = currentForceIn.getValue();
+        // fCur = currentForceIn.getValue();
+        if (currentForceIn.valueDefined()) {
+            fCur = currentForceIn.getValue();
+        } else {
+            fCur.setZero();
+        }
 
         Sf = I - S;
 

@@ -89,7 +89,13 @@ class BaseToTaskForce : public barrett::systems::System {
     task_vector_force_type forceTask;
 
     virtual void operate() {
-        forceBase = forceBaseIn.getValue();
+        // forceBase = forceBaseIn.getValue();
+        if (forceBaseIn.valueDefined()) {
+            forceBase = forceBaseIn.getValue();
+        } else {
+            forceBase << 0.0, 0.0, 0.0;
+        }
+
         Rtb = baseToTaskIn.getValue();
 
         task_vector_force_type tmp;
