@@ -79,6 +79,30 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     typedef typename barrett::math::Vector<3>::type task_vector_velocity_type;
     typedef typename barrett::math::Vector<3>::type task_control_type;
 
+    // default gains
+    v_type default_p_gains = wam.jpController.getKp();
+    v_type default_d_gains = wam.jpController.getKd();
+    v_type default_i_gains = wam.jpController.getKi();
+
+    // contact gains
+    v_type contact_p_gains = default_p_gains * 0.0;
+    v_type contact_d_gains = default_d_gains * 0.0;
+    v_type contact_i_gains = default_i_gains * 0.0;
+
+
+    // helper lambdas
+    auto setDefaultGains = [&]() {
+        wam.jpController.setKp(default_p_gains);
+        wam.jpController.setKd(default_d_gains);
+        wam.jpController.setKi(default_i_gains);
+    };
+
+    auto setContactGains = [&]() {
+        wam.jpController.setKp(contact_p_gains);
+        wam.jpController.setKd(contact_d_gains);
+        wam.jpController.setKi(contact_i_gains);
+    };
+
 
     ExternalTorque<DOF> externalTorque(pm.getExecutionManager());
     ExternalWrench<DOF> externalWrench(pm.getExecutionManager());
@@ -158,8 +182,8 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
 
     // jtsum for external torque
     barrett::systems::connect(wam.gravity.output, customjtSum.getInput(0));
-    barrett::systems::connect(controlToJoint.jointTorqueOut, customjtSum.getInput(1));
-    // barrett::systems::connect(wam.supervisoryController.output, customjtSum.getInput(1));
+    // barrett::systems::connect(controlToJoint.jointTorqueOut, customjtSum.getInput(1));
+    barrett::systems::connect(wam.supervisoryController.output, customjtSum.getInput(1));
 
     // external torque
     barrett::systems::connect(wam.gravity.output, externalTorque.wamGravityIn);
@@ -262,7 +286,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     barrett::systems::connect(desiredVelocityTraj.output, hybridTaskLogGroup.getInput<0>());
     barrett::systems::connect(basetoTaskVelocity.velocityTaskOut, hybridTaskLogGroup.getInput<1>());
     barrett::systems::connect(desiredForceSource.output, hybridTaskLogGroup.getInput<2>());
-    barrett::systems::connect(delayedTaskForce.output, hybridTaskLogGroup.getInput<3>());
+    barrett::systems::connect(basetoTaskForce.forceTaskOut, hybridTaskLogGroup.getInput<3>());
 
     const size_t kHybridLogPeriodMult = 1;
 
@@ -306,6 +330,16 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
         if (std::cin.peek() == '\n') {
             std::cin.get();
 
+            if (contactActive) {
+                barrett::systems::disconnect(wam.input);
+                delayedTaskForce.reset(zeroTaskForce);
+                hybridControl.resetState();
+                stopHybridDatalog();
+                contactActive = false;
+            }
+
+            // setDefaultGains();
+
             std::cout << "Returning home..." << std::endl;
             wam.moveHome();
             std::cout << "At home." << std::endl;
@@ -313,24 +347,45 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
             continue;
         }
 
+        
+
         char cmd;
         std::cin >> cmd;
 
         std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 
+
         if (cmd == 'q') {
             std::cout << "Exiting..." << std::endl;
-            stopHybridDatalog();
+
+            if (contactActive) {
+                barrett::systems::disconnect(wam.input);
+                stopHybridDatalog();
+                contactActive = false;
+            }
+
+            // setDefaultGains();
             break;
         }
 
         switch (cmd) {
 
             case 't':
+                if (contactActive) {
+                    barrett::systems::disconnect(wam.input);
+                    delayedTaskForce.reset(zeroTaskForce);
+                    hybridControl.resetState();
+                    stopHybridDatalog();
+                    contactActive = false;
+                }
+
+                // setDefaultGains();
+
                 std::cout << "Moving to target..." << std::endl;
                 wam.moveTo(target, true);
                 std::cout << "At target." << std::endl;
                 break;
+
 
             case 'c':
                 if (!contactActive) {
@@ -342,27 +397,19 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
 
                     startHybridDatalog();
 
-                    // Use wam.input (jtSum JT_INPUT): trackReferenceSignal routes through
-                    // supervisory Converter, which can leave SC undefined when jtSum runs
-                    // (jtSum uses undefined-as-zero), so only gravity appeared in jtSum.
-                    // wam.idle(); // this disconnects supervisoryController (PID input)
-                    // barrett::systems::connect(torqueSum.totalTorqueOut, wam.input);
-                    wam.idle();
-                    // barrett::systems::reconnect(torqueSum.totalTorqueOut, customjtSum.getInput(1));
-                    wam.trackReferenceSignal(controlToJoint.jointTorqueOut);
-                    // wam.idle();
+                    // setContactGains();
                     // barrett::systems::connect(controlToJoint.jointTorqueOut, wam.input);
-                    // barrett::systems::forceConnect(wam.supervisoryController.output, customjtSum.getInput(1));
 
-
-
-
+                    wam.idle();
+                    // setDefaultGains();
+                    wam.trackReferenceSignal(controlToJoint.jointTorqueOut);
 
                     contactActive = true;
                 } else {
                     std::cout << "Contact controller already active." << std::endl;
                 }
                 break;
+
 
             case 'x':
                 if (contactActive) {
@@ -371,8 +418,9 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
                     barrett::systems::disconnect(wam.input);
                     delayedTaskForce.reset(zeroTaskForce);
                     hybridControl.resetState();
-
                     stopHybridDatalog();
+
+                    // setDefaultGains();
 
                     contactActive = false;
                 } else {

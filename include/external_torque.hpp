@@ -31,10 +31,13 @@ class ExternalTorque : public barrett::systems::System {
     }
 
   protected:
+
     typename Output<jt_type>::Value* jtOutputValue;
     jt_type jtSum;
     jt_type gravity;
     jt_type externalTorque;
+
+    virtual bool inputsValid() {  return true;  };
 
     virtual void operate() {
 

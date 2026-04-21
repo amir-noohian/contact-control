@@ -157,15 +157,15 @@ class JointTorqueWithCompensation : public barrett::systems::System {
     jt_type totalTorque;
 
     virtual void operate() {
-        bool ctrlDef = controlTorqueIn.valueDefined();
-        bool dynDef = dynamicsIn.valueDefined();
-        bool gravDef = gravityIn.valueDefined();
+        // bool ctrlDef = controlTorqueIn.valueDefined();
+        // bool dynDef = dynamicsIn.valueDefined();
+        // bool gravDef = gravityIn.valueDefined();
 
-        std::cout << "JointTorqueWithCompensation: "
-                  << "control=" << ctrlDef
-                  << " dynamics=" << dynDef
-                  << " gravity=" << gravDef
-                  << std::endl;
+        // std::cout << "JointTorqueWithCompensation: "
+        //           << "control=" << ctrlDef
+        //           << " dynamics=" << dynDef
+        //           << " gravity=" << gravDef
+        //           << std::endl;
 
         // controlTorque = controlTorqueIn.getValue();
         if (controlTorqueIn.valueDefined()) {
@@ -178,7 +178,7 @@ class JointTorqueWithCompensation : public barrett::systems::System {
         gravity = gravityIn.getValue();
 
         for (size_t i = 0; i < DOF; ++i) {
-            totalTorque[i] = controlTorque[i] + 0.0 * dynamics[i] - 0.0 * gravity[i];
+            totalTorque[i] = controlTorque[i] + dynamics[i] - gravity[i];
         }
 
         totalTorqueOutputValue->setData(&totalTorque);
