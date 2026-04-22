@@ -111,6 +111,44 @@ class BaseToTaskForce : public barrett::systems::System {
 
 
 template <size_t DOF>
+class ForceClamp : public barrett::systems::System {
+public:
+    typedef typename barrett::math::Vector<3>::type task_vector_force_type;
+
+    Input<task_vector_force_type> input;
+    Output<task_vector_force_type> output;
+
+    ForceClamp(barrett::systems::ExecutionManager* em,
+               const task_vector_force_type& limit,
+               const std::string& sysName = "ForceClamp")
+        : System(sysName), input(this), output(this, &outputValue), limit_(limit) {
+        if (em) em->startManaging(*this);
+    }
+
+protected:
+    typename Output<task_vector_force_type>::Value* outputValue;
+    task_vector_force_type limit_;
+
+    virtual void operate() {
+        task_vector_force_type f = input.getValue();
+
+        for (size_t i = 0; i < 3; ++i) {
+            // NaN protection
+            if (!std::isfinite(f[i])) {
+                f[i] = 0.0;
+            }
+
+            // clamp per axis
+            if (f[i] > limit_[i])  f[i] = limit_[i];
+            if (f[i] < -limit_[i]) f[i] = -limit_[i];
+        }
+
+        outputValue->setData(&f);
+    }
+};
+
+
+template <size_t DOF>
 class BaseToTaskTransform : public barrett::systems::System {
  public:
     typedef typename barrett::math::Matrix<3, 3>::type transform_type;

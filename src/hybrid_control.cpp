@@ -90,6 +90,8 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     v_type contact_i_gains = default_i_gains * 0.0;
 
 
+
+
     // helper lambdas
     auto setDefaultGains = [&]() {
         wam.jpController.setKp(default_p_gains);
@@ -182,8 +184,8 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
 
     // jtsum for external torque
     barrett::systems::connect(wam.gravity.output, customjtSum.getInput(0));
-    // barrett::systems::connect(controlToJoint.jointTorqueOut, customjtSum.getInput(1));
-    barrett::systems::connect(wam.supervisoryController.output, customjtSum.getInput(1));
+    // barrett::systems::connect(controlToJoint.jointTorqueOut, customjtSum.getInput(1)); // it is not good, as when the robot goes through singularity, the estimations become Nan.
+    barrett::systems::connect(wam.supervisoryController.output, customjtSum.getInput(1)); // it seems that switching from PID joitn position controoler to Cartesian force/motion controller adds noise in force estimation
 
     // external torque
     barrett::systems::connect(wam.gravity.output, externalTorque.wamGravityIn);
@@ -219,12 +221,20 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
         pm.getExecutionManager(), velTrajAxis, velTrajPeakM_s, velTrajPeriod_s,
         "DesiredVelTraj");
 
+    task_vector_force_type force_limit;
+    force_limit[0] = 5.0;  // x
+    force_limit[1] = 5.0;  // y
+    force_limit[2] = 7.0;  // z (larger for contact direction)
+    ForceClamp<DOF> forceClamp(pm.getExecutionManager(), force_limit);
+
     ConstantOutput<task_vector_force_type> desiredForceSource(pm.getExecutionManager(), desiredForce, "DesiredForce");
 
     barrett::systems::connect(desiredVelocityTraj.output, hybridControl.desiredVelocityIn);
     barrett::systems::connect(desiredForceSource.output, hybridControl.desiredForceIn);
     barrett::systems::connect(basetoTaskVelocity.velocityTaskOut, hybridControl.currentVelocityIn);
-    barrett::systems::connect(basetoTaskForce.forceTaskOut, hybridControl.currentForceIn);
+    barrett::systems::connect(basetoTaskForce.forceTaskOut, forceClamp.input);
+    barrett::systems::connect(forceClamp.output, hybridControl.currentForceIn);
+    // barrett::systems::connect(basetoTaskForce.forceTaskOut, hybridControl.currentForceIn);
     // barrett::systems::connect(delayedTaskForce.output, hybridControl.currentForceIn);
 
 
@@ -397,18 +407,53 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
 
                     startHybridDatalog();
 
-                    // setContactGains();
+                    // setContactGains();basetoTaskForce.forceTaskOut
                     // barrett::systems::connect(controlToJoint.jointTorqueOut, wam.input);
 
-                    wam.idle();
+                    // wam.idle(); 
                     // setDefaultGains();
                     wam.trackReferenceSignal(controlToJoint.jointTorqueOut);
+                    // barrett::systems::connect(controlToJoint.jointTorqueOut, wam.input);
 
                     contactActive = true;
                 } else {
                     std::cout << "Contact controller already active." << std::endl;
                 }
                 break;
+
+            // case 'i':
+            //     std::cout << "Switching to idle..." << std::endl;
+
+            //     if (contactActive) {
+            //         stopHybridDatalog();
+            //         delayedTaskForce.reset(zeroTaskForce);
+            //         hybridControl.resetState();
+            //         contactActive = false;
+            //     }
+
+            //     wam.idle();
+            //     break;
+
+            // case 'c':
+            //     if (!contactActive) {
+            //         std::cout << "Starting contact controller..." << std::endl;
+
+            //         delayedTaskForce.reset(zeroTaskForce);
+            //         hybridControl.resetState();
+            //         desiredVelocityTraj.resetPhase();
+
+            //         startHybridDatalog();
+
+            //         // optionally set contact gains here
+            //         // setContactGains();
+
+            //         wam.trackReferenceSignal(controlToJoint.jointTorqueOut);
+
+            //         contactActive = true;
+            //     } else {
+            //         std::cout << "Contact controller already active." << std::endl;
+            //     }
+            //     break;
 
 
             case 'x':
