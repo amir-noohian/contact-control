@@ -1,241 +1,403 @@
-# Contact Control for Barrett WAM
+# Hybrid Contact Control for Barrett WAM
 
-This repository contains C++ implementations of contact-based control strategies for the Barrett WAM robotic arm using `libbarrett`.
+This research project implements hybrid force/motion control on a Barrett WAM
+using libbarrett. The main experiments combine motion along base x with contact
+force regulation along base z. The F/T variants use a physical force/torque
+sensor and command joint torques through a Jacobian-transpose mapping.
 
-The project focuses on:
-- Hybrid force/motion control
-- External force and torque estimation
-- Task-space to joint-space transformations
-- Interaction with simple environments (e.g., planar contact)
+| Executable | Motion feedback | Force source | Source |
+|---|---|---|---|
+| `hybrid_fp_ft` | Cartesian position with velocity damping | Barrett F/T sensor | [FP application](src/hybrid_fp_ft.cpp) |
+| `hybrid_fv_ft` | Cartesian velocity with optional error derivative | Barrett F/T sensor | [FV application](src/hybrid_fv_ft.cpp) |
+| `hybrid_control` | Original task-frame force/velocity implementation | Estimated external wrench from joint torque signals | [Original application](src/hybrid_control.cpp) |
 
-The code is designed for real-time execution and experimentation on physical WAM hardware.
+The descriptions and commands below apply to **FP and FV** unless stated
+otherwise. The original controller retains its own task-frame transforms,
+headers, references, and logging. The former `hybrid_control_ft` executable was
+renamed to `hybrid_fv_ft`; an old build directory may still contain its obsolete
+binary.
 
-## Structure
-- `src/` – main control implementations  
-- `include/hybrid_control/` – original controller headers, including force estimation and task-frame transforms
-- `include/hybrid_ft/` – shared F/T sensor, configuration, torque mapping, and logging utilities
-- `include/hybrid_fv_ft/` – force/velocity controller and sinusoidal velocity reference
-- `include/hybrid_fp_ft/` – force/position controller and position trajectory
-- `config/` – robot configuration files  
-- `scripts/` – utility scripts (e.g., CAN setup)
+## Build and run
 
-## Notes
+Dependencies include a C++14 compiler, CMake, libbarrett and its dependencies
+(including Eigen and libconfig++), Curses, and Boost system/iostreams. Running the
+controllers requires a configured WAM and a detected Barrett F/T sensor.
+Python plotting requires Python 3 and matplotlib.
 
-### Runtime F/T controller tuning
-
-Edit `config/hybrid_fv_ft.conf`, then stop and restart `hybrid_fv_ft`.
-No rebuild is needed for tuning changes. The program prints the loaded file path
-and rejects missing or invalid settings. Changes are not loaded during a run.
-The default path points to this checkout, independent of the working directory.
-To use a different file (or run a relocated executable), set:
-
-```bash
-export HYBRID_FV_FT_CONFIG=/absolute/path/to/hybrid_fv_ft.conf
-```
-
-This is separate from `BARRETT_CONFIG_FILE`, which selects robot calibration and
-kinematics. The tuning file controls diagonal Cartesian P/D and P/I gains,
-feedforward gain, integral bound, velocity/force axis selection, force target,
-sinusoidal motion, feedback clamps, target joint pose, and logging cadence/path.
-Joint hold gains use the selected robot configuration by default; set
-`use_robot_hold_gains = false` to use `hold_kp` and `hold_kd` from the tuning file.
-The planar joint assignment (joints 2/4 active), sensor sign convention, and
-robot execution period remain structural settings rather than tuning options.
-The current tuning values are in each executable's own configuration file.
-
-Shared F/T utilities live in the `hybrid_ft` namespace and header folder.
-The `hybrid_fv_ft` and `hybrid_fp_ft` namespaces/folders contain their respective
-`controller.hpp` and motion-reference headers. Both use
-`hybrid_ft/constant_output.hpp` for constant force references.
-
-`hybrid_fv_ft` uses the Barrett F/T sensor's force instead of the torque-based
-force estimate. It keeps the original hybrid controller gains, references,
-force clamp, keyboard commands, and CSV columns. Logs use
-`hybrid_fv_ft_datalog_NNNN.csv` in `log_directory` (relative to the working directory).
-The sensor must be detected at startup. Its force is rotated from tool to base
-coordinates; sensor axes are assumed aligned with tool axes. Velocity feedback,
-references, controller output, and logged vectors all use the base frame. The
-controller output maps directly to joint torques through the base-frame linear
-Jacobian transpose on joints 2 and 4 only (zero-based indices 1 and 3).
-All other joints, including wrist joints on a 7-DOF WAM, use position-hold PD
-torques: `Kp * (q_hold - q) - Kd * qdot`. Gains come from the WAM joint-position
-controller. Each press of `c` that starts contact captures the current joint
-positions as hold targets; this hold operates only during contact control.
-Gravity compensation remains enabled for all joints. This is a compliant servo
-hold, not a mechanical lock or a fixed tool-orientation controller. The held
-pose determines the motion plane; the references still use base x and z.
-Sensor and base force prints both show environment-on-robot force; the
-sensor-to-base system only rotates the vector. A separate gain of -1 converts
-base force to robot-on-environment force for controller feedback and CSV logs.
-Controller feedback is clamped
-to +/-5 N on x/y and +/-20 N on z; this is not a contact-force or output-torque limit.
-The `t` command tares the F/T sensor after the robot reaches the target and
-before accepting the next command. Payload compensation is not applied.
-Measured moments are not used.
-
-Contact CSV logs preserve the original twelve velocity/force columns and append:
-`time_s` (steady-clock seconds since the first logged sample),
-`fsensor_x/y/z` (sensor-frame environment-on-robot force in N, including any tare),
-`q1` through `q4` or `q7` (joint positions in radians, depending on robot DOF),
-and `R_world_tool_00` through `R_world_tool_22` (row-major tool-to-world rotation).
-The rotation is the exact matrix used by the force conversion; world equals base
-when `world_to_base` is identity. Thus logged force satisfies
-`fcur = -R_world_tool * fsensor`, before feedback clamping.
-Each new contact log restarts `time_s` at zero. Existing CSV files are unchanged.
-
-Build with `cmake -S . -B build` and
-`cmake --build build --target hybrid_fv_ft hybrid_fp_ft`. The executables are
-`build/bin/hybrid_fv_ft` and `build/bin/hybrid_fp_ft`.
-
-This is an experimental research codebase for studying contact-rich manipulation and control on torque-controlled manipulators.
-
-### Force/position controller (`hybrid_fp_ft`)
-
-The former `hybrid_control_ft` executable/source/config is now `hybrid_fv_ft`.
-The original torque-estimation `hybrid_control` remains separate. Shared F/T
-headers use `include/hybrid_ft/`; controller-specific headers use the matching
-`include/hybrid_fv_ft/` and `include/hybrid_fp_ft/` folders.
-Use the newly named binary; an old build directory may still contain an obsolete
-`hybrid_control_ft` binary that CMake does not remove.
-
-`hybrid_fp_ft` reads `config/hybrid_fp_ft.conf`; override it with
-`HYBRID_FP_FT_CONFIG`. It uses position PD on base x and force feedforward + PI
-on the complementary axes:
-
-`u = S * (Kp * (p_des - p) + Kd * (v_des - v)) + (I-S) * (gff * f_des + Kf * (f_des-f) + Ki * integral)`.
-
-The position version requires `motion_axes = [1, 0, 0]`. With the supplied zero
-y-force reference/gains, only x position and z force are controlled. Joints 2/4
-receive Jacobian-transpose torques and the other joints hold their activation
-positions, as in the force/velocity executable.
-
-1. Enter `t`: move to the configured joint target, tare the sensor, and capture
-   the actual Cartesian tool position as the reference origin.
-2. Enter `c`: move toward `origin.x + position_distance` while maintaining the
-   configured force. Default distance is **+0.10 m** along base x. A quintic
-   reference takes **6 seconds** (`position_duration`), with zero reference
-   velocity/acceleration at its endpoints. It then holds the x endpoint while
-   force control continues. Physical tracking depends on gains/contact; the
-   elapsed trajectory duration does not certify that the robot reached the goal.
-3. Enter `x` to stop. Restarting with `c` interpolates from the current position
-   to the same endpoint, without adding another 10 cm. Entering `t` captures a
-   new origin. Enter returns home and invalidates that origin; `c` then requires
-   another `t`. `q` exits.
-
-`position_kp` (N/m) and `position_kd` (N*s/m) tune the position servo. The supplied
-150/20 x gains are tuning values, not hardware-validated tuning. Force settings
-are copied from the current FV configuration, including the -10 N z reference.
-Force engagement still uses the existing constant reference; no force ramp or
-payload compensation is added.
-
-FP logs use `hybrid_fp_ft_datalog_NNNN.csv` and include all existing diagnostics
-plus `pdes_x/y/z` and `pcur_x/y/z` in meters. Only x of the position reference is
-controlled. The old experiment CSVs are left under their original names.
-
-Hardware-free checks:
+From the repository root:
 
 ```bash
 cmake -S . -B build -DCONTACT_CONTROL_BUILD_TESTS=ON
-cmake --build build
+cmake --build build -j2
 ctest --test-dir build --output-on-failure
 ```
 
-Plot FP position x and force z against the recorded timestamps (requires Python 3
-and `matplotlib`):
+Run one controller from `build/` so the supplied `log_directory = "../data"`
+resolves to the repository's data directory:
+
+```bash
+cd build
+./bin/hybrid_fp_ft
+# Or: ./bin/hybrid_fv_ft
+```
+
+Use the appropriate robot configuration/calibration for the hardware.
+`BARRETT_CONFIG_FILE` selects the robot configuration; it is separate from the
+controller tuning file. Example configuration trees are under
+[config/slax](config/slax) and [config/zeus](config/zeus).
+
+Controller tuning is loaded once at startup from
+[hybrid_fp_ft.conf](config/hybrid_fp_ft.conf) or
+[hybrid_fv_ft.conf](config/hybrid_fv_ft.conf). The compiled default points to this
+checkout. To override it, set the matching environment variable before running:
+
+```bash
+export HYBRID_FP_FT_CONFIG=/absolute/path/to/hybrid_fp_ft.conf
+export HYBRID_FV_FT_CONFIG=/absolute/path/to/hybrid_fv_ft.conf
+```
+
+Restart after changing a configuration; rebuilding is unnecessary. The program
+prints the selected tuning path and pattern and rejects invalid required values.
+The configuration files are experiment settings, not universal validated gains.
+Numerical examples in this README do not override those files.
+
+## Coordinate frames and signs
+
+| Frame | Meaning |
+|---|---|
+| Sensor | Axes in which the F/T sensor reports force |
+| Tool | Tool frame defined by the selected robot kinematics |
+| Base | Fixed robot-base axes used for the F/T control task |
+| World | libbarrett kinematic reference frame |
+
+The implementation assumes **sensor axes align with tool axes**. It reads
+`tool->rot_to_world` and multiplies the sensor force by that matrix. This is a
+tool-to-world rotation, not its transpose. Calling the result “base force” assumes
+that the robot's `world_to_base` transform is identity. A nonidentity robot
+configuration requires reviewing the frame conversion and reference definitions.
+
+Let `R` map tool/sensor coordinates into world/base coordinates. The sensor
+convention is **environment-on-robot**:
+
+```text
+F_env_base = R * F_sensor
+F_robot_base = -F_env_base
+```
+
+The negative sign converts the measurement into **robot-on-environment**, the
+convention used by desired force and controller feedback. For example, a desired
+base-z force of -5 N means the robot pushes toward base -z; the environment's
+reaction is toward base +z.
+
+| Signal | Coordinates | Force convention / processing |
+|---|---|---|
+| Console `sensorForce` | Sensor | Environment on robot, sensor reading after any tare |
+| Console `baseForce` | Base under the identity assumption | Environment on robot, rotated only |
+| CSV `fsensor_*` | Sensor | Same convention as `sensorForce` |
+| CSV `fcur_*` | Base | Robot on environment, unfiltered and unclamped |
+| CSV `ffiltered_*` | Base | Robot on environment, low-pass filtered, before clamp |
+| Controller force feedback | Base | Robot on environment, filtered and clamped |
+| Desired force, position, velocity | Base | Force uses robot-on-environment convention |
+
+The controller uses only the three force components; measured moments are unused.
+There is no extra sensor mounting rotation, payload compensation, or contact-frame
+estimation. Base x/z remain the task axes as the tool moves. Holding the other
+joints does not guarantee a fixed tool orientation.
+
+## Signal flow and implementation
+
+```mermaid
+flowchart LR
+    FT[Sensor force] --> R[Rotate to base]
+    R --> SIGN[Negate force sign]
+    SIGN --> LP[Low-pass filter]
+    LP --> CLAMP[Feedback clamp]
+    CLAMP --> CTRL[FP or FV controller]
+    REF[Motion and force references] --> CTRL
+    KIN[Tool position and velocity] --> CTRL
+    CTRL --> JT[Jacobian transpose for joints 2 and 4]
+    HOLD[PD hold for other joints] --> SUM[Joint command]
+    JT --> SUM
+    SUM --> WAM[WAM with gravity compensation]
+```
+
+The applications construct libbarrett `System` objects, connect typed inputs and
+outputs, and let the execution manager evaluate their `operate()` methods.
+Kinematics supply Cartesian position, velocity, tool rotation, and the tool
+Jacobian. Controller integration and filtering use the execution-manager period;
+trajectory references use elapsed `steady_clock` time. The control period comes
+from the robot runtime, not from the trajectory duration or logging settings.
+
+| Location | Responsibility |
+|---|---|
+| [src/hybrid_fp_ft.cpp](src/hybrid_fp_ft.cpp), [src/hybrid_fv_ft.cpp](src/hybrid_fv_ft.cpp) | Configuration, signal wiring, command handling, and logger lifecycle |
+| [include/hybrid_ft](include/hybrid_ft) | Shared sensor acquisition, frame conversion, configuration loader, filter, clamp, Jacobian, joint torques, constant reference, and CSV logger |
+| [FP controller](include/hybrid_fp_ft/controller.hpp) | Position PD plus force PI/feedforward |
+| [FP reference](include/hybrid_fp_ft/position_reference.hpp) | One-way position move or ramped position sine |
+| [FV controller](include/hybrid_fv_ft/controller.hpp) | Velocity PD plus force PI/feedforward |
+| [FV reference](include/hybrid_fv_ft/velocity_reference.hpp) | Sine velocity or finite move velocity; integrated position for diagnostics |
+| [include/hybrid_control](include/hybrid_control) | Original estimated-wrench/task-frame implementation |
+| [tests](tests) | Hardware-free control-law, reference, filter, configuration, and torque-mapping checks |
+| [scripts](scripts) | Plotting and hardware setup utilities |
+
+## Control design
+
+All Cartesian gains are diagonal. Define:
+
+```text
+S  = diag(motion_axes)
+Sf = I - S
+ef = Fdesired - Ffeedback
+If[k] = clamp(If[k-1] + Sf * ef[k] * dt, +/-force_integral_limit)
+uf = Sf * (force_feedforward_gain * Fdesired + Kf * ef + Ki * If)
+```
+
+`motion_axes = [1, 0, 0]` selects motion control on x and force control on y/z.
+With zero y-force target and gains, y contributes no command. FP requires this
+selection; FV accepts binary axis selections. In FV, choose `velocity_axis` on a
+motion-selected axis for the reference to contribute to the controller output.
+
+### Force/position (FP)
+
+```text
+ep = pdesired - pmeasured
+ev = vdesired - vmeasured
+u  = S * (Kp_position * ep + Kd_position * ev) + uf
+```
+
+`vdesired` is the analytic derivative of the position reference, including the
+sine startup envelope. Position gains have units N/m; damping gains have units
+N*s/m. FP corrects position error during the move and continues correcting x
+error at the final endpoint. There is no position integral term, so a sustained
+load can leave a position offset.
+
+### Force/velocity (FV)
+
+```text
+ev = vdesired - vmeasured
+ev_dot[k] = (ev[k] - ev[k-1]) / dt
+u = S * (Kp_velocity * ev + Kd_velocity * ev_dot) + uf
+```
+
+The first derivative sample after reset is zero. The derivative is a finite
+difference of velocity error, not the FP position controller's velocity damping.
+Velocity proportional gains have units N*s/m; derivative gains have units
+N*s^2/m. FV logs a desired position for comparison, but position does not enter
+its feedback law. A finite velocity reference therefore does not guarantee the
+specified physical displacement or restore an absolute endpoint after drift.
+
+### Joint torque mapping
+
+`u` is a three-component Cartesian force-like command. Let `Jv` be the first
+three rows of the tool Jacobian. Only joints **2 and 4** receive its transpose
+mapping (zero-based indices 1 and 3):
+
+```text
+tau[i] = Jv[:, i]^T * u                         for joints 2 and 4
+tau[i] = hold_kp[i]*(q_hold[i]-q[i]) - hold_kd[i]*qdot[i]  otherwise
+```
+
+The held pose is captured whenever contact control starts. By default, hold gains
+come from `wam.jpController`; `use_robot_hold_gains = false` selects the explicit
+configuration arrays. Gravity compensation remains enabled through the WAM's
+separate gravity contribution.
+
+This is a joint-torque hybrid controller, not a Cartesian inverse-dynamics or
+operational-space decoupling controller. Selecting different force/motion axes
+does not remove physical coupling through robot dynamics, friction, contact
+geometry, or changing tool orientation. Two active joints do not provide general
+six-degree-of-freedom pose control.
+
+## Motion patterns
+
+For a duration `D`, define `s = clamp(t/D, 0, 1)` and the quintic profile:
+
+```text
+h(s) = 10*s^3 - 15*s^4 + 6*s^5
+h_dot = 30*s^2*(1-s)^2 / D
+```
+
+It begins and ends with zero reference velocity and acceleration.
+
+| Controller / pattern | Settings | Behavior |
+|---|---|---|
+| FP `move` | `position_distance`, `position_duration` | Smooth move to target-origin x plus signed distance, then hold reference |
+| FP `sine` | `position_amplitude`, `position_period`, `position_duration` | Oscillate around target-origin x; duration controls startup envelope |
+| FV `move` | `velocity_distance`, `velocity_duration`, `velocity_axis` | Smooth finite velocity pulse, then zero desired velocity |
+| FV `sine` | `velocity_peak`, `velocity_period`, `velocity_axis` | Continuous sinusoidal velocity |
+
+### FP references
+
+`t` captures the Cartesian target origin `x0`. Each activation `c` captures the
+actual starting position `xs` and restarts time.
+
+For `position_pattern = "move"`:
+
+```text
+xgoal = x0 + position_distance
+xdesired(t) = xs + h(t/D)*(xgoal-xs)
+vdesired(t) = h_dot(t/D)*(xgoal-xs)
+```
+
+`D = position_duration`. Restarting `c` after stopping moves from the current
+position toward the same endpoint, rather than adding another full distance.
+Only x is position-controlled; z remains force-controlled.
+
+For `position_pattern = "sine"`, let `A = position_amplitude`,
+`omega = 2*pi/position_period`, and `b = h(t/position_duration)`:
+
+```text
+xdesired = xs + b*(x0-xs + A*sin(omega*t))
+vdesired = b_dot*(x0-xs + A*sin(omega*t)) + b*A*omega*cos(omega*t)
+```
+
+After the startup envelope, the reference is `x0 + A*sin(omega*t)`. Amplitude is
+one-sided: 0.05 m means +/-5 cm, or 10 cm peak-to-peak. `position_distance` is
+unused in sine mode. A sine reaches its positive peak at period/4; choosing a
+period four times the ramp duration makes the first full-amplitude peak coincide
+with ramp completion. Intermediate motion still differs from a one-way move.
+
+### FV references
+
+For `velocity_pattern = "move"`, with signed distance `L` and duration `D`:
+
+```text
+vdesired(t) = (L/D)*30*s^2*(1-s)^2     for 0 < t < D
+vdesired(t) = 0                       otherwise
+```
+
+The integral is `L`; peak speed is `1.875*abs(L)/D`. For example, a 0.10 m command
+over 6 seconds peaks at 0.03125 m/s. `velocity_peak` is unused in this mode.
+Every new activation starts another full pulse relative to the current pose.
+
+For `velocity_pattern = "sine"`:
+
+```text
+vdesired(t) = velocity_peak*sin(omega*t)
+omega = 2*pi/velocity_period
+pdesired_axis(t) = pstart_axis + velocity_peak/omega*(1-cos(omega*t))
+```
+
+This integrated position oscillates between the starting position and a positive
+offset of `2*velocity_peak/omega`; it is not the FP sine centered on the target.
+The logged integrated reference is calculated analytically for both patterns.
+
+## Force filtering, limits, and tare
+
+The shared first-order low-pass uses:
+
+```text
+alpha = 1 - exp(-2*pi*force_filter_cutoff_hz*dt)
+Ffiltered[k] = Ffiltered[k-1] + alpha*(Fraw[k]-Ffiltered[k-1])
+```
+
+The filter initializes to its first reading and resets after target-pose tare.
+A cutoff of `0` bypasses filtering; a missing setting in an older configuration
+also defaults to bypass. Lower cutoffs smooth more but add feedback delay.
+Nonfinite force components are replaced with zero in the filtering/clamping path.
+
+`force_feedback_limit` clips the filtered feedback per axis before error
+calculation. It does **not** limit physical contact force or the Cartesian/joint
+torque command. The integral bound is in N*s; maximum integral contribution on
+an axis is `force_ki[axis] * force_integral_limit`. This is integral clamping,
+not back-calculation from actuator saturation. Increasing Ki changes both the
+correction rate and that maximum contribution.
+
+`t` calls the sensor's native `tare()` after the blocking joint move completes,
+under the execution-manager mutex. Any load present at that pose becomes part of
+the baseline. No extra settling delay, tare verification, or orientation-dependent
+payload compensation is implemented. Force references are constant; there is no
+force-reference ramp at contact activation. A filter can attenuate a recorded
+spike without eliminating its physical cause.
+
+## Interactive operation
+
+| Command | Action |
+|---|---|
+| `t` | Stop active contact/logging, move to `target_position`, tare F/T, reset force filter; FP also captures target origin |
+| `c` | Start contact control and a new CSV, reset controller/reference state, capture held-joint pose |
+| `x` | Disconnect contact control and close the CSV; does not command a Cartesian position hold |
+| Enter | Stop contact if active and move home; invalidate FP target origin |
+| `q` | Stop active contact logging/control and exit the command loop; no explicit home move in this branch |
+
+FP refuses `c` until `t` has established an origin. FV has no such prerequisite
+check, so use `t` then `c` for the intended target-and-tare workflow. Pressing `c`
+while already active does not restart the trajectory. Reaching a reference's
+end time does not automatically stop the controller or close the log.
+
+## Configuration reference
+
+| Settings | Purpose |
+|---|---|
+| `motion_axes` | Binary selection: 1 motion, 0 force, in base XYZ order |
+| `position_kp`, `position_kd` | FP position and velocity-error gains |
+| `velocity_kp`, `velocity_kd` | FV velocity-error and error-derivative gains |
+| `force_kp`, `force_ki`, `force_feedforward_gain` | Force feedback and feedforward |
+| `force_integral_limit` | Positive per-axis bound on accumulated force error |
+| `desired_force` | Base-frame robot-on-environment force target in N |
+| `force_filter_cutoff_hz`, `force_feedback_limit` | Low-pass cutoff and feedback clipping |
+| `position_pattern`, `velocity_pattern` | `move` or `sine` for the corresponding executable |
+| Pattern parameters above | Distances/amplitudes in m, velocities in m/s, durations/periods in s |
+| `target_position` | Seven joint angles in radians; four-DOF robots use first four |
+| `use_robot_hold_gains`, `hold_kp`, `hold_kd` | PD gains for joints outside the Cartesian task |
+| `log_period_multiplier` | Record every N execution cycles |
+| `log_directory` | Output directory, relative to process working directory if not absolute |
+
+The source of truth for a run is the tuning file loaded at startup. CSVs do not
+currently embed the gains, cutoff, selected robot configuration, or a complete
+configuration snapshot; preserve those separately when comparing experiments.
+
+## CSV data and plots
+
+Each contact activation creates the next numbered file in `log_directory`:
+`hybrid_fp_ft_datalog_NNNN.csv` or `hybrid_fv_ft_datalog_NNNN.csv`. Historical
+`hybrid_base_ft_datalog_*` files retain their old names and may lack newer columns.
+
+| Columns | Meaning |
+|---|---|
+| `vdes_x/y/z`, `vcur_x/y/z` | Desired and measured Cartesian velocity, m/s |
+| `fdes_x/y/z`, `fcur_x/y/z` | Desired and raw sign-corrected base force, N |
+| `time_s` | Steady-clock elapsed seconds from the first logged sample; resets per file |
+| `fsensor_x/y/z` | Sensor-frame force after any tare, environment-on-robot, N |
+| `q1` through `qN` | Measured joint angles, rad |
+| `R_world_tool_00` through `R_world_tool_22` | Row-major tool-to-world rotation used in force conversion |
+| `pdes_x/y/z`, `pcur_x/y/z` | Desired and measured Cartesian position, m; FV desired position is diagnostic only |
+| `ffiltered_x/y/z` | Filtered base force before feedback clamping, N |
+
+For the logged raw signals, `fcur = -R_world_tool * fsensor`. The actual force
+feedback is `clamp(ffiltered, +/-force_feedback_limit)`, so raw `fcur` can exceed
+the configured clamp. CSV time starts at first logging, not necessarily the exact
+reference start instant. The logger writes CSV rows directly from its system's
+execution callback; this is not an asynchronous buffered logging service.
+
+From the repository root, substituting an existing run number:
 
 ```bash
 python3 scripts/plot_hybrid_fp_ft_csv.py data/hybrid_fp_ft_datalog_0001.csv
+python3 scripts/plot_hybrid_fv_ft_csv.py data/hybrid_fv_ft_datalog_0001.csv
 ```
 
-To save without opening a window:
+FP plots x position and z force. FV plots x position, x velocity, and z force;
+older logs without positions fall back to velocity/force panels. Both overlay
+filtered z force when available. To save without a window:
 
 ```bash
 python3 scripts/plot_hybrid_fp_ft_csv.py data/hybrid_fp_ft_datalog_0001.csv --save fp_plot.png --no-show
 ```
 
-Both panels compare desired and measured values. Position is in meters; force
-is in newtons using the robot-on-environment convention.
+The older `plot_hybrid_task_csv.py` supports original task-controller logs.
 
-### Sinusoidal FP position reference
+## Verification and practical limits
 
-In `config/hybrid_fp_ft.conf`, select either `position_pattern = "move"` (the
-existing one-way move and hold) or `position_pattern = "sine"`. Restart the
-executable after editing, then use `t` followed by `c`.
+The hardware-free tests cover the FP control law, quintic/sine references,
+finite FV displacement integral, low-pass response/reset/bypass, configuration
+loading, and planar joint-torque mapping. They do not establish closed-loop
+stability, physical sensor alignment, contact behavior, or suitable gains for a
+particular tool and surface.
 
-For sine mode:
-
-```text
-position_pattern = "sine";
-position_amplitude = 0.05; # meters, +/-5 cm around captured target x
-position_period = 6.0;    # seconds per cycle
-position_duration = 6.0; # startup ramp duration in seconds
-```
-
-After the ramp, `x_des = x_target + amplitude * sin(2*pi*t/period)`, where time
-starts on `c`. A quintic envelope blends from the actual current x position
-into this sine during `position_duration`, starting at zero reference velocity.
-The damping reference is the analytic derivative, including the ramp term.
-The pattern repeats until stopped; `position_distance` is unused in sine mode.
-Each restart with `c` restarts phase and ramp, keeping the origin captured by
-`t`. Force control and the FP CSV format are unchanged, so the FP plotting
-script works with either pattern.
-
-### Finite FV move reference
-
-`config/hybrid_fv_ft.conf` supports `velocity_pattern = "sine"` (the existing
-periodic reference, still selected by default) and `velocity_pattern = "move"`:
-
-```text
-velocity_pattern = "move";
-velocity_axis = 0;
-velocity_distance = 0.10; # signed meters of commanded displacement
-velocity_duration = 6.0; # seconds
-```
-
-Move mode uses the derivative of the FP quintic move:
-`v_des = (distance/duration) * 30*s^2*(1-s)^2`, with `s = t/duration`,
-and zero velocity outside the move interval. It starts and ends smoothly; its
-integral is `velocity_distance`. Peak speed is `1.875*abs(distance)/duration`.
-`velocity_peak` and `velocity_period` apply only to sine mode.
-
-Restart after editing, use `t` to reach/tare at the target, then `c` to start.
-Each new activation with `c` restarts the full velocity pulse. After its duration,
-the velocity reference remains zero while force control continues until stopped.
-This is velocity feedback, so actual distance depends on tracking; there is no
-position-error correction or absolute endpoint hold. Unlike FP, restarting FV
-move mode commands another full relative displacement. CSV columns are unchanged.
-
-Plot FV desired/measured x velocity and z force using logged timestamps:
-
-```bash
-python3 scripts/plot_hybrid_fv_ft_csv.py data/hybrid_fv_ft_datalog_0001.csv
-```
-
-Add `--save fv_plot.png --no-show` to save without opening a window. Requires
-`matplotlib`. Velocity is in m/s and force is in N; both sine and move logs use
-the same format.
-
-New FV logs also append `pdes_x/y/z` and `pcur_x/y/z`. The desired position is
-computed analytically by integrating the velocity reference and adding the
-actual tool position captured on each `c` activation. It is a diagnostic
-reference, not position feedback. Measured position comes from robot kinematics.
-The FV plotting script shows position x, velocity x, and force z in three panels.
-Older logs without position columns still show velocity and force only, with a
-notice; they cannot provide measured Cartesian position through this script.
-
-### Force low-pass filtering (FP and FV)
-
-`force_filter_cutoff_hz = 20.0` enables a first-order low-pass on all three
-base-frame, robot-on-environment force components. Set it to `0` to bypass;
-older configs without this setting also bypass. Restart to apply changes.
-The filter uses the execution-manager period and
-`alpha = 1 - exp(-2*pi*cutoff_hz*dt)`, with `filtered += alpha*(input-filtered)`.
-It initializes to the first reading and resets after the target-pose tare.
-The path is sensor -> rotation -> sign conversion -> low-pass -> clamp -> controller.
-
-`fcur_x/y/z` remain unfiltered, unclamped measurements. New `ffiltered_x/y/z`
-columns record filtered force before clamping. Both FP and FV plotting scripts
-show filtered z force when available and continue to support older logs.
-Filtering introduces lag; 20 Hz is an initial setting, not hardware-validated
-control tuning. It does not eliminate the physical startup force transient or
-provide a contact-force limit.
+Position/velocity and force channels can interact during sliding even when
+force-only regulation performs well. Tare, filtering, and increasing gains do not
+supply payload compensation or dynamic decoupling. The implementation has no
+Cartesian output saturation or contact-force shutdown in these controller
+classes; feedback clipping must not be interpreted as either. Robot-level
+protections are configured separately through libbarrett and the hardware.
