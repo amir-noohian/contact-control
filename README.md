@@ -32,8 +32,8 @@ cmake --build build -j2
 ctest --test-dir build --output-on-failure
 ```
 
-Run one controller from `build/` so the supplied `log_directory = "../data"`
-resolves to the repository's data directory:
+Run one controller from `build/` so the supplied log directory resolves to
+the corresponding repository data subdirectory:
 
 ```bash
 cd build
@@ -349,9 +349,12 @@ configuration snapshot; preserve those separately when comparing experiments.
 
 ## CSV data and plots
 
-Each contact activation creates the next numbered file in `log_directory`:
+Each contact activation creates the next numbered file in its controller's
+data subdirectory (`data/hybrid_fp_ft` or `data/hybrid_fv_ft`):
 `hybrid_fp_ft_datalog_NNNN.csv` or `hybrid_fv_ft_datalog_NNNN.csv`. Historical
-`hybrid_base_ft_datalog_*` files retain their old names and may lack newer columns.
+`hybrid_base_ft_datalog_*` files are kept in `data/hybrid_base_ft`, retain
+their old names, and may lack newer columns. Hybrid task logs are written to
+`data/hybrid_task`.
 
 | Columns | Meaning |
 |---|---|
@@ -373,8 +376,8 @@ execution callback; this is not an asynchronous buffered logging service.
 From the repository root, substituting an existing run number:
 
 ```bash
-python3 scripts/plot_hybrid_fp_ft_csv.py data/hybrid_fp_ft_datalog_0001.csv
-python3 scripts/plot_hybrid_fv_ft_csv.py data/hybrid_fv_ft_datalog_0001.csv
+python3 scripts/plot_hybrid_fp_ft_csv.py data/hybrid_fp_ft/hybrid_fp_ft_datalog_0001.csv
+python3 scripts/plot_hybrid_fv_ft_csv.py data/hybrid_fv_ft/hybrid_fv_ft_datalog_0001.csv
 ```
 
 FP plots x position and z force. FV plots x position, x velocity, and z force;
@@ -382,7 +385,7 @@ older logs without positions fall back to velocity/force panels. Both overlay
 filtered z force when available. To save without a window:
 
 ```bash
-python3 scripts/plot_hybrid_fp_ft_csv.py data/hybrid_fp_ft_datalog_0001.csv --save fp_plot.png --no-show
+python3 scripts/plot_hybrid_fp_ft_csv.py data/hybrid_fp_ft/hybrid_fp_ft_datalog_0001.csv --save fp_plot.png --no-show
 ```
 
 The older `plot_hybrid_task_csv.py` supports original task-controller logs.

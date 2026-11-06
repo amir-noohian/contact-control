@@ -44,13 +44,29 @@ endfunction()
 # Executables (run on WAM)
 # -----------------------------
 add_programs(
+  4dof_dyncomp
+  4dof_gravcomp
+  dynamics_excitation
   hybrid_control
   hybrid_fv_ft
   hybrid_fp_ft
 )
 
+add_executable(dyncomp_control src/dyncomp_control.cpp)
+add_executable(comptorq_control src/comptorq_control.cpp)
+target_link_libraries(dyncomp_control
+  ${BARRETT_LIBRARIES}
+  ${CURSES_LIBRARIES}
+)
+target_link_libraries(comptorq_control
+  ${BARRETT_LIBRARIES}
+  ${CURSES_LIBRARIES}
+)
+
 # Installed libbarrett/libconfig headers use pre-C++17 exception specifications.
-set_property(TARGET hybrid_control hybrid_fv_ft hybrid_fp_ft APPEND_STRING PROPERTY COMPILE_FLAGS " -std=c++14")
+set_property(TARGET dyncomp_control comptorq_control 4dof_dyncomp 4dof_gravcomp dynamics_excitation hybrid_control hybrid_fv_ft hybrid_fp_ft APPEND_STRING PROPERTY COMPILE_FLAGS " -std=c++14")
+set_property(TARGET dyncomp_control comptorq_control APPEND PROPERTY COMPILE_DEFINITIONS
+  JOINT_TRACKING_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 set_property(TARGET hybrid_fv_ft APPEND PROPERTY COMPILE_DEFINITIONS
   HYBRID_FV_FT_DEFAULT_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/hybrid_fv_ft.conf")
 
@@ -60,6 +76,16 @@ set_property(TARGET hybrid_fp_ft APPEND PROPERTY COMPILE_DEFINITIONS
 option(CONTACT_CONTROL_BUILD_TESTS "Build hardware-free controller tests" OFF)
 if(CONTACT_CONTROL_BUILD_TESTS)
   enable_testing()
+  add_executable(joint_tracking_log_test tests/joint_tracking_log.cpp)
+  target_link_libraries(joint_tracking_log_test ${BARRETT_LIBRARIES})
+  set_property(TARGET joint_tracking_log_test APPEND_STRING PROPERTY COMPILE_FLAGS " -std=c++14 -UNDEBUG")
+  add_test(NAME joint_tracking_log COMMAND joint_tracking_log_test)
+  add_executable(joint_computed_torque_test tests/joint_computed_torque.cpp)
+  set_property(TARGET joint_computed_torque_test APPEND_STRING PROPERTY COMPILE_FLAGS " -std=c++14 -UNDEBUG")
+  add_test(NAME joint_computed_torque COMMAND joint_computed_torque_test)
+  add_executable(excitation_time_test tests/excitation_time.cpp)
+  set_property(TARGET excitation_time_test APPEND_STRING PROPERTY COMPILE_FLAGS " -std=c++14 -UNDEBUG")
+  add_test(NAME excitation_time COMMAND excitation_time_test)
   add_executable(force_low_pass_test tests/force_low_pass.cpp)
   target_link_libraries(force_low_pass_test ${BARRETT_LIBRARIES})
   set_property(TARGET force_low_pass_test APPEND_STRING PROPERTY COMPILE_FLAGS " -std=c++14 -UNDEBUG")

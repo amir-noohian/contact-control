@@ -34,7 +34,7 @@ namespace {
 /** Ensures data dir exists; path hybrid_task_datalog_NNNN.csv (NNNN = 1 + max existing .csv). */
 std::string nextHybridTaskLogPath()
 {
-    const char* dataDir = "../../data";
+    const char* dataDir = "../../data/hybrid_task";
     const char* prefix = "hybrid_task_datalog_";
     mkdir(dataDir, 0755);
 
@@ -310,7 +310,7 @@ int wam_main(int argc, char** argv, barrett::ProductManager& pm, barrett::system
     std::cout << "  x : stop contact controller\n";
     std::cout << "  ENTER : move home\n";
     std::cout << "  q : quit\n";
-    std::cout << "  (datalog: ../../data/hybrid_task_datalog_NNNN.csv while contact is active)\n";
+    std::cout << "  (datalog: ../../data/hybrid_task/hybrid_task_datalog_NNNN.csv while contact is active)\n";
 
     barrett::systems::ExecutionManager* const em = pm.getExecutionManager();
 
