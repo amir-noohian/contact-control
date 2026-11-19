@@ -9,6 +9,10 @@ sensor and command joint torques through a Jacobian-transpose mapping.
 |---|---|---|---|
 | `hybrid_fp_ft` | Cartesian position with velocity damping | Barrett F/T sensor | [FP application](src/hybrid_fp_ft.cpp) |
 | `hybrid_fv_ft` | Cartesian velocity with optional error derivative | Barrett F/T sensor | [FV application](src/hybrid_fv_ft.cpp) |
+| `hybrid_cartesian_dynamics` | Cartesian inverse dynamics along base x with force PI along base z | Barrett F/T sensor | [Cartesian dynamics application](src/hybrid_cartesian_dynamics.cpp) |
+| `hybrid_cartesian_nominal` | Same Cartesian control law with nominal Barrett rigid-body dynamics | Barrett F/T sensor | [Nominal dynamics application](src/hybrid_cartesian_nominal.cpp) |
+| `4dof_nominal_dyncomp` | Nominal inverse dynamics with zero joint acceleration on joints 1-4 | Barrett robot config | [Nominal dynamic application](src/4dof_nominal_dyncomp.cpp) |
+| `4dof_nominal_gravcomp` | Nominal rigid-body gravity feedforward on joints 1-4 | Barrett robot config | [Nominal gravity application](src/4dof_nominal_gravcomp.cpp) |
 | `hybrid_control` | Original task-frame force/velocity implementation | Estimated external wrench from joint torque signals | [Original application](src/hybrid_control.cpp) |
 
 The descriptions and commands below apply to **FP and FV** unless stated
@@ -31,6 +35,90 @@ cmake -S . -B build -DCONTACT_CONTROL_BUILD_TESTS=ON
 cmake --build build -j2
 ctest --test-dir build --output-on-failure
 ```
+
+The Cartesian controller uses the [identified dynamics model](include/dynamics/dynamics.h)
+and [`beta` parameters](include/dynamics/beta.h) for inertia, Coriolis and
+centrifugal terms, modeled friction, and gravity on joints 2 and 4, which
+drive the Cartesian task. Every other joint holds a zero-angle reference with
+joint-space PD and Barrett calibrated gravity. The controller uses Barrett
+kinematics. Calibrated gravity supports the arm before engagement and after a
+task stop. Check
+its [separate tuning file](config/hybrid_cartesian_dynamics.conf) offline with
+`build/bin/hybrid_cartesian_dynamics --check-config` from the repository root.
+The executable accepts an optional tuning file path and prints the x gains and
+acceleration cap it loads. Restart the executable after editing the tuning file.
+On the WAM, gravity compensation begins at
+pendant activation. Like FP, `t` uses Barrett's default joint-position profile
+to move to `target_position`, then tares the unloaded F/T sensor and captures
+the tool pose. `c` starts the controller, including when the tared sensor
+reads zero. The controller ramps the base-z force reference from zero to
+-10 N over `force_ramp_duration` (2 s by default) while holding the x reference
+at its starting position. The 0.30 m, 36 s x move then begins. During the final
+x hold, the controller integrates the x position error with gain `motion_ki`.
+`motion_integral_acceleration_limit` bounds the integral contribution, and
+integration pauses if it would drive the overall acceleration command further
+into saturation. Set `motion_ki` to zero for a PD comparison run. The
+controller applies the measured force (`max_contact_force`), joint-speed,
+held-joint, and torque limits throughout `c`.
+Both Cartesian tuning files also support `position_pattern = "sine"`. In that
+mode, `position_amplitude` is the one-sided x amplitude and `position_period`
+sets the cycle time; `duration` controls the smooth startup blend from the
+current pose toward a sine centered on the captured target. The x sine and
+force ramp start together when `c` begins, while `x_distance` is ignored. The
+sine continues until contact control is stopped and does not enable the
+move-only final-hold x integral. The default pattern remains `"move"`.
+`x` stops contact control and preserves the target for another `c`. Enter
+stops contact control, invalidates the target, and returns to the calibrated
+home pose using Barrett's default home profile. `q` ends the command loop
+and waits for the pendant to leave Active mode before exiting.
+
+Each accepted Cartesian `c` run creates a numbered CSV in
+`data/hybrid_cartesian_dynamics/`. The `fdes_z` column records the ramped
+force reference. The CSV also records base-frame x tracking, measured and
+commanded forces, x acceleration before and after limiting, the x integral
+contribution (`a_integral_x`), and joint 2/4
+positions, velocities, and torque commands. The terminal prints the path.
+From the repository root, plot a run with Matplotlib installed.
+
+```bash
+python3 scripts/plot_hybrid_cartesian_dynamics_csv.py \
+    data/hybrid_cartesian_dynamics/hybrid_cartesian_dynamics_datalog_0001.csv
+```
+
+Add `--save run_0001.png --no-show` to save the figure without opening a window.
+
+### Nominal Cartesian controller
+
+Use `build/bin/hybrid_cartesian_nominal --check-config` to check its
+[tuning file](config/hybrid_cartesian_nominal.conf). Launch
+`build/bin/hybrid_cartesian_nominal` with the usual WAM configuration. It
+uses the same commands, references, and feedback as the identified controller.
+During `c`, it computes inertia and Coriolis/centrifugal torques from the robot
+configuration's `dynamics` block and uses Barrett's calibrated gravity signal.
+The controller subtracts that signal from the task-joint command to avoid
+double-counting it. Held joints use the same position PD and Barrett gravity
+compensation as the identified controller. Target and home moves use Barrett's
+standard position controller and calibrated gravity.
+
+Nominal CSVs are saved under `data/hybrid_cartesian_nominal/` and can be
+plotted with `scripts/plot_hybrid_cartesian_dynamics_csv.py`.
+
+### Unloaded static check
+
+`build/bin/hybrid_cartesian_static_check --predict-only` prints the identified
+static torques at 1.3642 rad on joint 2 and 1.2731 rad on joint 4. For the
+physical comparison, keep the same tool installed and
+clear the fixture from the entire move path and hold pose. Launch
+`build/bin/hybrid_cartesian_static_check` with the usual WAM configuration.
+Activate at the pendant and type `move` at the prompt.
+
+The diagnostic moves to the check pose with all other joint references at zero
+and records three seconds of steady Barrett position hold. It compares the
+WAM's torque commands to `W(q,0,0) * beta` evaluated at every measured joint
+configuration. The terminal prints each joint's mean hold command, model
+prediction, and difference. The CSV is saved under
+`data/hybrid_cartesian_static_check/`. Use the pendant to leave Active mode
+after the report.
 
 Run one controller from `build/` so the supplied log directory resolves to
 the corresponding repository data subdirectory:

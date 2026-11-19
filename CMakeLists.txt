@@ -46,10 +46,15 @@ endfunction()
 add_programs(
   4dof_dyncomp
   4dof_gravcomp
+  4dof_nominal_dyncomp
+  4dof_nominal_gravcomp
   dynamics_excitation
   hybrid_control
   hybrid_fv_ft
   hybrid_fp_ft
+  hybrid_cartesian_dynamics
+  hybrid_cartesian_nominal
+  hybrid_cartesian_static_check
 )
 
 add_executable(dyncomp_control src/dyncomp_control.cpp)
@@ -64,7 +69,7 @@ target_link_libraries(comptorq_control
 )
 
 # Installed libbarrett/libconfig headers use pre-C++17 exception specifications.
-set_property(TARGET dyncomp_control comptorq_control 4dof_dyncomp 4dof_gravcomp dynamics_excitation hybrid_control hybrid_fv_ft hybrid_fp_ft APPEND_STRING PROPERTY COMPILE_FLAGS " -std=c++14")
+set_property(TARGET dyncomp_control comptorq_control 4dof_dyncomp 4dof_gravcomp 4dof_nominal_dyncomp 4dof_nominal_gravcomp dynamics_excitation hybrid_control hybrid_fv_ft hybrid_fp_ft APPEND_STRING PROPERTY COMPILE_FLAGS " -std=c++14")
 set_property(TARGET dyncomp_control comptorq_control APPEND PROPERTY COMPILE_DEFINITIONS
   JOINT_TRACKING_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 set_property(TARGET hybrid_fv_ft APPEND PROPERTY COMPILE_DEFINITIONS
@@ -72,6 +77,16 @@ set_property(TARGET hybrid_fv_ft APPEND PROPERTY COMPILE_DEFINITIONS
 
 set_property(TARGET hybrid_fp_ft APPEND PROPERTY COMPILE_DEFINITIONS
   HYBRID_FP_FT_DEFAULT_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/hybrid_fp_ft.conf")
+
+set_property(TARGET hybrid_cartesian_dynamics hybrid_cartesian_nominal hybrid_cartesian_static_check APPEND_STRING PROPERTY COMPILE_FLAGS " -std=c++14")
+set_property(TARGET hybrid_cartesian_dynamics hybrid_cartesian_nominal APPEND PROPERTY COMPILE_DEFINITIONS
+  HYBRID_CARTESIAN_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+set_property(TARGET hybrid_cartesian_dynamics APPEND PROPERTY COMPILE_DEFINITIONS
+  HYBRID_CARTESIAN_DYNAMICS_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/hybrid_cartesian_dynamics.conf")
+set_property(TARGET hybrid_cartesian_nominal APPEND PROPERTY COMPILE_DEFINITIONS
+  HYBRID_CARTESIAN_NOMINAL_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/hybrid_cartesian_nominal.conf")
+set_property(TARGET hybrid_cartesian_static_check APPEND PROPERTY COMPILE_DEFINITIONS
+  HYBRID_CARTESIAN_STATIC_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 
 option(CONTACT_CONTROL_BUILD_TESTS "Build hardware-free controller tests" OFF)
 if(CONTACT_CONTROL_BUILD_TESTS)
@@ -108,6 +123,16 @@ if(CONTACT_CONTROL_BUILD_TESTS)
   set_property(TARGET controller_config_test APPEND_STRING PROPERTY COMPILE_FLAGS " -std=c++14")
   add_test(NAME controller_config COMMAND controller_config_test
     "${CMAKE_CURRENT_SOURCE_DIR}/config/hybrid_fv_ft.conf")
+  add_executable(hybrid_cartesian_dynamics_test tests/hybrid_cartesian_dynamics.cpp)
+  target_link_libraries(hybrid_cartesian_dynamics_test ${BARRETT_LIBRARIES})
+  set_property(TARGET hybrid_cartesian_dynamics_test APPEND_STRING PROPERTY COMPILE_FLAGS " -std=c++14 -UNDEBUG")
+  add_test(NAME hybrid_cartesian_dynamics_law COMMAND hybrid_cartesian_dynamics_test)
+  set_tests_properties(hybrid_cartesian_dynamics_law PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/config/slax")
+  add_test(NAME hybrid_cartesian_dynamics_config COMMAND hybrid_cartesian_dynamics --check-config)
+  add_test(NAME hybrid_cartesian_nominal_config COMMAND hybrid_cartesian_nominal --check-config)
+  add_test(NAME hybrid_cartesian_static_prediction COMMAND hybrid_cartesian_static_check --predict-only)
+  set_tests_properties(hybrid_cartesian_static_prediction PROPERTIES TIMEOUT 5)
 endif()
 
 # Plotting-only executable
